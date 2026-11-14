@@ -97,9 +97,31 @@ tbody tr[data-selected="true"] { background: #1b2a4d; }
 .steps .cost { color: var(--muted); font-size: 13px; }
 .why { color: var(--muted); font-size: 13.5px; margin-top: 12px; }
 .note { color: var(--faint); font-size: 12.5px; margin-top: 14px; }
+.picks { margin-top: 18px; }
+.picks h2 { font-size: 15px; margin: 0 0 10px; letter-spacing: .2px; }
+.pick-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.pick { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; color: var(--text); cursor: pointer; display: flex; flex-direction: column; gap: 3px;
+  font: inherit; }
+.pick:hover, .pick:focus-visible { border-color: var(--amber); }
+.pick-rank { color: var(--amber); font-size: 12px; font-weight: 700; letter-spacing: .4px; }
+.pick b { font-size: 14.5px; line-height: 1.25; }
+.pick-value { color: var(--amber); font-weight: 700; font-size: 15px; }
+.pick-reason { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.band { margin-top: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 16px; }
+.band p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+.band p b { color: var(--text); }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+  font-size: 12.5px; color: var(--text); }
+.flags { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.flags li { margin-bottom: 6px; }
+.watchouts h3 { color: var(--amber); }
 @media (max-width: 760px) {
   .lede { grid-template-columns: 1fr; }
   .facts { grid-template-columns: repeat(2, 1fr); }
   .equation { grid-template-columns: 1fr; }
   .count { margin-left: 0; }
+  .pick-row { grid-template-columns: repeat(2, 1fr); }
 }

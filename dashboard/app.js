@@ -1,15 +1,18 @@
-// Token Radar's dashboard (radar-2). It reads window.RADAR (written beside dashboard/
+// Token Radar's dashboard (radar-3). It reads window.RADAR (written beside dashboard/
 // by main.ts) and renders the ranked board, a filterable table, a per-protocol detail
-// drawer with the model's own inputs and the protocol's farm plan. No network: every
-// byte it shows is in data.js.
+// drawer with the model's own inputs, its watch-outs and its farm plan, and the full
+// live-token benchmark table the model prices off. No network: every byte it shows
+// is in data.js.
 //
-// The value model, radar-2: implied = TVL x peerMultiple(category) x growthMult x
+// The value model, radar-3: implied = TVL x peerMultiple(category) x growthMult x
 // maturityMult, where peerMultiple is the category's live-token peers' median mcap/TVL
 // shrunk toward the market median. The page recomputes a row from the snapshot figures
 // and checks the number board.json carries, so the page's code and the board's data are
 // visibly the same arithmetic. The farm plan is the same derivation main.ts writes to
 // board.json: category, chains, TVL and age decide the action, the capital, the hold
-// and every cost and time. No name is special-cased.
+// and every cost and time. No name is special-cased. Every protocol in the snapshot is
+// accounted for on the page: ranked on the board, set aside as a product of a token
+// that already trades, or listed in the benchmark table with its own multiple.
 (function () {
   'use strict';
 
@@ -34,6 +37,10 @@
     if (days === null || days === undefined) return 'unknown';
     if (days >= 365) return (days / 365).toFixed(1) + 'y';
     return Math.max(0, Math.round(days)) + 'd';
+  }
+  function fmtMult(x) {
+    if (x === null || x === undefined || !isFinite(x)) return 'n/a';
+    return x.toFixed(3) + 'x';
   }
   // The model in one function: peer multiple comes from the row, growth and maturity
   // are recomputed from the snapshot figures the row carries.
@@ -209,17 +216,63 @@
     var top = DATA.rows[0];
     return el('section', { class: 'lede' },
       el('div', null,
-        el('h1', { text: DATA.watchlist_size + ' watchlist protocols, ranked by implied value' }),
-        el('p', { text: 'The watchlist is the floor: every protocol with at least $' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL and no token on record. The early radar adds ' + DATA.early_size + ' pre-token protocols below that floor — every farmable one the snapshot holds. Implied value is a model, not a promise.' })
+        el('h1', { text: DATA.board_size + ' pre-token protocols, ranked by implied value' }),
+        el('p', { text: 'Every protocol in the snapshot is accounted for: ' + DATA.board_size + ' that record no token are ranked here (all ' + DATA.watchlist_size + ' watchlist protocols among them — the watchlist is the floor, not the ceiling), ' + DATA.aside_size + ' that record no token are set aside as wrapped, staked, bridged or exchange products of tokens that already trade, and ' + DATA.token_recorded_size + ' already record a token. Implied value is a model, not a promise.' })
       ),
       el('div', { class: 'facts' },
         el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
         el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Set aside as products of live tokens' }), el('b', { text: String(DATA.aside_size) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Live tokens priced as comps' }), el('b', { text: String(DATA.live_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Top implied value' }), el('b', { text: top ? fmtUsd(top.implied_value_usd) : 'n/a' })),
-        el('div', { class: 'fact' }, el('span', { text: 'Market median multiple' }), el('b', { text: String(DATA.market_median_multiple) + 'x' })),
-        el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
+        el('div', { class: 'fact' }, el('span', { text: 'Market median multiple' }), el('b', { text: String(DATA.market_median_multiple) + 'x' }))
       )
+    );
+  }
+
+  // The one-line reason a top pick earns its place, from the row's own figures only.
+  function pickReason(r) {
+    var bits = [];
+    if (r.category_rank === 1) bits.push('the largest implied value in ' + (r.category || 'its category'));
+    if (DATA.watchlistSlugs.includes(r.slug)) bits.push('on the house watchlist');
+    if (r.change_7d !== null && r.change_7d >= 10) bits.push('TVL up ' + r.change_7d.toFixed(1) + '% in seven days');
+    else if (r.change_7d !== null && r.change_7d <= -10) bits.push('ranked on size despite a ' + (-r.change_7d).toFixed(1) + '% TVL dip');
+    if (r.age_days !== null && r.age_days >= 1095) bits.push('token-free for ' + fmtAge(r.age_days));
+    if (bits.length === 0) bits.push(fmtUsd(r.tvl_usd) + ' of TVL with no token on record');
+    return bits.slice(0, 2).join('; ') + '.';
+  }
+
+  // Start here: the five rows a reader should farm first, each with its reason.
+  function picks() {
+    var cards = DATA.rows.slice(0, 5).map(function (r) {
+      return el('button', { type: 'button', class: 'pick', onclick: function () { openDetail(r.slug); } },
+        el('span', { class: 'pick-rank', text: '#' + r.rank }),
+        el('b', { text: r.name }),
+        el('span', { class: 'pick-value num', text: fmtUsd(r.implied_value_usd) }),
+        el('span', { class: 'pick-reason', text: pickReason(r) })
+      );
+    });
+    return el('section', { class: 'picks', 'aria-label': 'Start here' },
+      el('h2', { text: 'Start here — the five to farm first' }),
+      el('div', { class: 'pick-row' }, cards)
+    );
+  }
+
+  // The model in one band, visible before the table: the formula and the multiples
+  // that carry the most board value, so the pricing is on the first screen.
+  function modelBand() {
+    var boardCats = {};
+    DATA.rows.forEach(function (r) { boardCats[r.category || 'Other'] = true; });
+    var chips = (DATA.peer_multiples || []).filter(function (t) { return boardCats[t.category]; })
+      .sort(function (a, b) { return b.multiple - a.multiple; })
+      .slice(0, 6)
+      .map(function (t) { return el('span', { class: 'chip', text: t.category + ' ' + fmtMult(t.multiple) }); });
+    return el('section', { class: 'band', 'aria-label': 'The value model' },
+      el('p', null,
+        el('b', { text: 'The model: ' }),
+        'implied value = TVL x the category\u2019s peer multiple x a growth factor x a maturity factor. Peer multiples are the median market cap per TVL dollar of the ' + DATA.live_size + ' live tokens in the same category, shrunk toward the market median of ' + String(DATA.market_median_multiple) + 'x and clamped to [0.05x, 1.00x] — the full table is below the board, and every comp is listed in the Live token tab.'
+      ),
+      el('div', { class: 'chips' }, chips)
     );
   }
 
@@ -248,7 +301,7 @@
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSelect),
       el('label', { class: 'check' }, wl, 'Watchlist only'),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
-      el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
+      el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' priced live-token protocols' })
     );
   }
 
@@ -259,6 +312,17 @@
         state.sort === key ? el('span', { 'aria-hidden': 'true', text: state.dir < 0 ? ' v' : ' ^' }) : null
       )
     );
+  }
+
+  // The glanceable signal in a row's sub-line, from the row's own figures only:
+  // momentum first, then a long token-free run, then a very new listing, then the
+  // watchlist mark. A row with none of them shows its category and chain alone.
+  function signalFor(r) {
+    if (r.change_7d !== null && r.change_7d >= 15) return 'surging: TVL up ' + r.change_7d.toFixed(1) + '% this week';
+    if (r.age_days !== null && r.age_days >= 1095) return 'token-free for ' + fmtAge(r.age_days);
+    if (r.age_days !== null && r.age_days <= 90) return 'new: listed ' + fmtAge(r.age_days) + ' ago';
+    if (DATA.watchlistSlugs.includes(r.slug)) return 'on the house watchlist';
+    return '';
   }
 
   function boardTable() {
@@ -275,6 +339,7 @@
     list.forEach(function (r) {
       var growth = r.change_7d === null ? 'n/a' : fmtPct(r.change_7d);
       var growthClass = r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg';
+      var signal = signalFor(r);
       var tr = el('tr', {
         'data-selected': state.selected === r.slug ? 'true' : 'false',
         tabindex: '0',
@@ -284,7 +349,7 @@
         el('td', { class: 'num', text: String(r.rank) }),
         el('td', null, el('div', { class: 'name' },
           el('b', { text: r.name }),
-          el('span', { class: 'sub', text: (r.category || 'Other') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') })
+          el('span', { class: 'sub', text: (r.category || 'Other') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') + (signal ? ' · ' + signal : '') })
         )),
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
         el('td', { class: 'num ' + growthClass, text: growth }),
@@ -320,19 +385,19 @@
     var tbody = el('tbody');
     DATA.live.forEach(function (r) {
       tbody.appendChild(el('tr', null,
-        el('td', { class: 'num', text: 'live' }),
         el('td', null, el('div', { class: 'name' }, el('b', { text: r.name }), el('span', { class: 'sub', text: (r.category || 'Other') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') }))),
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
         el('td', { class: 'num ' + (r.change_7d !== null && r.change_7d >= 0 ? 'pos' : 'neg'), text: fmtPct(r.change_7d) }),
         el('td', { class: 'num', text: fmtUsd(r.mcap_usd) }),
+        el('td', { class: 'num', text: fmtMult(r.multiple) }),
         el('td', null, el('span', { class: 'status live', text: 'already trades' }))
       ));
     });
     return el('div', { class: 'panel' },
       el('div', { class: 'table-wrap' },
         el('table', null,
-          el('caption', { class: 'sub', text: 'Token live: these protocols already trade, so their market cap is a fact, not a model. They are set aside from the pre-token ranking.' }),
-          el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Status' }), el('th', { scope: 'col', text: 'Protocol' }), el('th', { scope: 'col', text: 'TVL' }), el('th', { scope: 'col', text: '7d' }), el('th', { scope: 'col', text: 'Market cap' }), el('th', { scope: 'col', text: 'Token' }))),
+          el('caption', { class: 'sub', text: 'The benchmark set: every protocol in the snapshot whose token already trades at a recorded price — all ' + DATA.live_size + ' of them, each with the market cap per TVL dollar it contributes. The board\u2019s peer multiples are medians of this table by category, shrunk toward the market median and clamped, so one huge multiple cannot swing a category. Another ' + DATA.unpriced_size + ' protocols record a token with no market price in the snapshot: they are neither ranked nor used as comps.' }),
+          el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Protocol' }), el('th', { scope: 'col', text: 'TVL' }), el('th', { scope: 'col', text: '7d' }), el('th', { scope: 'col', text: 'Market cap' }), el('th', { scope: 'col', text: 'Mcap / TVL' }), el('th', { scope: 'col', text: 'Token' }))),
           tbody
         )
       )
@@ -348,14 +413,14 @@
     var multRows = mults.map(function (t) {
       return el('tr', null,
         el('td', { text: t.category }),
-        el('td', { class: 'num', text: t.multiple.toFixed(3) + 'x' }),
+        el('td', { class: 'num', text: fmtMult(t.multiple) }),
         el('td', { class: 'num', text: String(t.peers) }),
-        el('td', { class: 'num', text: t.peer_median === null ? 'n/a' : t.peer_median.toFixed(3) + 'x' })
+        el('td', { class: 'num', text: fmtMult(t.peer_median) })
       );
     });
     return el('section', { class: 'panel model' },
       el('h2', { text: 'How implied value is computed' }),
-      el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked. The peer multiple is what the market already pays for a token in the same category: the live-token peers\' median market cap per dollar of TVL, shrunk toward the market median of ' + DATA.market_median_multiple + 'x so a category with few peers cannot swing the board.' }),
+      el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked. The peer multiple is what the market already pays for a token in the same category: the live-token peers\' median market cap per dollar of TVL, shrunk toward the market median of ' + DATA.market_median_multiple + 'x so a category with few peers cannot swing the board. Every one of the ' + DATA.live_size + ' priced peers behind these medians is listed, with its own multiple, in the Live token tab.' }),
       el('div', { class: 'formula' },
         'implied = round( tvl_usd x peerMultiple(category) x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') )'
       ),
@@ -366,6 +431,18 @@
       ),
       el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. "No token" means the snapshot records no token for the protocol — it does not prove the protocol has none. Implied value is this radar\'s own estimate, not a price and not a promise of a launch.' })
     );
+  }
+
+  // The risks a farmer should see before the plan, each one read off the row's own
+  // snapshot figures — never a hand-written note on a named protocol.
+  function watchOuts(row) {
+    var flags = [];
+    if (row.change_7d !== null && row.change_7d <= -10) flags.push('TVL fell ' + (-row.change_7d).toFixed(1) + '% in seven days. Momentum is against it: size the position down, or wait for the trend to turn before adding.');
+    if (row.change_7d === null) flags.push('No seven-day growth is reported, so the model scores its growth as flat — there is no momentum evidence either way.');
+    if (row.age_days !== null && row.age_days < 90) flags.push('Listed only ' + fmtAge(row.age_days) + ' ago. The record is short and any points program this young is unproven; keep the position small.');
+    if (row.peer_count < 3) flags.push('Its category has ' + (row.peer_count === 0 ? 'no' : 'only ' + row.peer_count) + ' priced live peer' + (row.peer_count === 1 ? '' : 's') + ', so the model falls back to the market median multiple — treat this implied value as less certain than most.');
+    if (!row.chains || row.chains.length <= 1) flags.push('It runs on a single chain, so bridge trouble or an outage there pauses the whole farm.');
+    return flags;
   }
 
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
@@ -401,7 +478,14 @@
         el('div', { class: 'total' }, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
       ),
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + fmtUsd(recomputed) + (recomputed === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' }),
-      el('p', { class: 'why', text: 'Why this rank: ' + row.name + ' records no token and holds ' + fmtUsd(row.tvl_usd) + ' of TVL in ' + (row.category || 'an uncategorised') + ', a category whose live-token peers trade at ' + row.peer_multiple.toFixed(3) + 'x TVL. ' + (row.change_7d === null ? 'No seven-day growth is reported.' : row.change_7d >= 0 ? 'Its TVL rose ' + row.change_7d.toFixed(2) + '% in seven days.' : 'Its TVL fell ' + (-row.change_7d).toFixed(2) + '% in seven days.') + ' It has run ' + fmtAge(row.age_days) + ' with no token on record.' })
+      el('p', { class: 'why', text: 'Why this rank: ' + row.name + ' records no token and holds ' + fmtUsd(row.tvl_usd) + ' of TVL in ' + (row.category || 'an uncategorised') + ', a category whose live-token peers trade at ' + row.peer_multiple.toFixed(3) + 'x TVL. ' + (row.change_7d === null ? 'No seven-day growth is reported.' : row.change_7d >= 0 ? 'Its TVL rose ' + row.change_7d.toFixed(2) + '% in seven days.' : 'Its TVL fell ' + (-row.change_7d).toFixed(2) + '% in seven days.') + ' It has run ' + fmtAge(row.age_days) + ' with no token on record. On the board it is #' + row.category_rank + ' of ' + row.category_size + ' in its category.' })
+    ));
+    var flags = watchOuts(row);
+    dialog.appendChild(el('section', { class: 'detail-section watchouts' },
+      el('h3', { text: 'Watch-outs' }),
+      flags.length > 0
+        ? el('ul', { class: 'flags' }, flags.map(function (f) { return el('li', { text: f }); }))
+        : el('p', { class: 'sub', text: 'None from the snapshot figures: TVL is not falling fast, the record is not brand new, its category multiple rests on at least three priced peers, and it runs on more than one chain.' })
     ));
     var planCapital = capitalFor(row);
     var planGas = planCapital >= 150 ? 8 : 4;
@@ -429,6 +513,10 @@
     var shell = el('div', { class: 'shell' });
     shell.appendChild(header());
     shell.appendChild(lede());
+    if (state.tab === 'pre-token') {
+      shell.appendChild(picks());
+      shell.appendChild(modelBand());
+    }
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());

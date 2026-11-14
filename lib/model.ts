@@ -1,12 +1,16 @@
-// The token radar's model (radar-2): one snapshot of the protocol universe in, one ranked
+// The token radar's model (radar-3): one snapshot of the protocol universe in, one ranked
 // board out.
 //
 // The board covers EVERY farmable pre-token protocol in the snapshot: the 40 watchlist
 // slugs are the floor, never the ceiling, and the early radar adds every other protocol
 // the watchlist's own rule keeps (no token recorded, not an exchange, not a wrapped /
 // staked / bridged product, not a versioned pool) — 198 rows in all on this snapshot.
-// Live-token protocols are kept apart and shown as the market's own values, never mixed
-// into the ranked board.
+// Every other protocol in the snapshot is accounted for, not dropped: the ones that
+// record no token but are a wrapped, staked, bridged or exchange product of a token
+// that already trades are counted as set aside, and the ones whose token already
+// trades are the model's own benchmark set — the dashboard's Live token view lists
+// every priced one of them with the multiple it contributes, so the comp set the
+// model prices off can be audited row by row.
 //
 // Implied value follows only from the snapshot's own figures, through four components
 // the detail view shows for every row:
@@ -80,10 +84,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-2';
-
-/** How many live-token protocols the Live token view carries, by market cap. */
-export const LIVE_ROWS = 30;
+export const MODEL_VERSION = 'radar-3';
 
 /** One category's peer multiple, as the model panel shows it. */
 export interface PeerMultiple {
@@ -144,6 +145,11 @@ export interface RadarRow {
   base_value_usd: number;
   growth_multiplier: number;
   maturity_multiplier: number;
+  /** This row's rank inside its own category on the board, and the category's board size. */
+  category_rank: number;
+  category_size: number;
+  /** How many priced live peers its category's multiple rests on. */
+  peer_count: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -155,6 +161,8 @@ export interface LiveRow {
   tvl_usd: number;
   mcap_usd: number | null;
   change_7d: number | null;
+  /** The multiple this protocol contributes to its category's peer set: mcap / TVL. */
+  multiple: number | null;
 }
 
 /** Everything the dashboard needs: the board, the live set, and the model it runs. */
@@ -168,6 +176,13 @@ export interface RadarData {
   board_size: number;
   early_size: number;
   live_size: number;
+  /** The census of the whole snapshot, so every protocol is accounted for on the page. */
+  universe_size: number;
+  /** Protocols that record no token but the product rule sets aside (wrapped, staked, bridged, exchange, versioned). */
+  aside_size: number;
+  /** Protocols that record a token at all; of those, the ones with no market price in the snapshot. */
+  token_recorded_size: number;
+  unpriced_size: number;
   peer_multiples: PeerMultiple[];
   market_median_multiple: number;
   watchlistSlugs: string[];
@@ -496,12 +511,17 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   ];
 }
 
-/** The live-token protocols, by market cap, for the dashboard's Live token view. */
+/**
+ * The live-token protocols that carry a market price, by market cap, for the dashboard's
+ * Live token view: the model's whole benchmark set, every priced peer with the multiple
+ * it contributes, so the comp set can be audited row by row. A protocol that records a
+ * token but no market cap is not a usable comp and is counted, not shown (see
+ * RadarData.unpriced_size).
+ */
 export function liveRows(snapshot: Snapshot): LiveRow[] {
   return snapshot.protocols
-    .filter((p) => !isPreToken(p) && p.category !== 'CEX')
+    .filter((p) => p.mcap_usd !== null)
     .sort((a, b) => (b.mcap_usd ?? 0) - (a.mcap_usd ?? 0) || b.tvl_usd - a.tvl_usd)
-    .slice(0, LIVE_ROWS)
     .map((p) => ({
       slug: p.slug,
       name: p.name,
@@ -510,11 +530,12 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
       tvl_usd: p.tvl_usd,
       mcap_usd: p.mcap_usd,
       change_7d: p.change_7d,
+      multiple: p.tvl_usd > 0 ? round4((p.mcap_usd as number) / p.tvl_usd) : null,
     }));
 }
 
 /** A board row's compact form for data.js, with the farm plan generated in the page. */
-export function radarRow(row: BoardRow): RadarRow {
+export function radarRow(row: BoardRow, categoryRank: number, categorySize: number, peerCount: number): RadarRow {
   return {
     rank: row.rank,
     slug: row.slug,
@@ -531,6 +552,9 @@ export function radarRow(row: BoardRow): RadarRow {
     base_value_usd: row.model.base_value_usd,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
+    category_rank: categoryRank,
+    category_size: categorySize,
+    peer_count: peerCount,
   };
 }
 
@@ -540,6 +564,21 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const { table, marketMedian } = peerMultiples(snapshot, model);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
+  // Category ranks: the board is sorted by implied value, so a running count per
+  // category is each row's rank inside its own category.
+  const peersByCategory = new Map(table.map((t) => [t.category, t.peers]));
+  const seenInCategory = new Map<string, number>();
+  const sizeInCategory = new Map<string, number>();
+  for (const r of board) sizeInCategory.set(r.category ?? 'Other', (sizeInCategory.get(r.category ?? 'Other') ?? 0) + 1);
+  const rows = board.map((r) => {
+    const key = r.category ?? 'Other';
+    const rank = (seenInCategory.get(key) ?? 0) + 1;
+    seenInCategory.set(key, rank);
+    return radarRow(r, rank, sizeInCategory.get(key) ?? rank, peersByCategory.get(key) ?? 0);
+  });
+  // The census: every protocol in the snapshot lands in exactly one bucket — ranked on
+  // the board, set aside by the product rule, or already recording a token (priced or not).
+  const preToken = snapshot.protocols.filter(isPreToken).length;
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -550,10 +589,14 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     board_size: board.length,
     early_size: early,
     live_size: live.length,
+    universe_size: snapshot.protocols.length,
+    aside_size: preToken - board.length,
+    token_recorded_size: snapshot.protocols.length - preToken,
+    unpriced_size: snapshot.protocols.length - preToken - live.length,
     peer_multiples: table,
     market_median_multiple: round4(marketMedian),
     watchlistSlugs: snapshot.watchlist.slice(),
-    rows: board.map(radarRow),
+    rows,
     live,
   };
   return { board, radar };

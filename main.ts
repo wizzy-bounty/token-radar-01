@@ -1,7 +1,7 @@
 // A working token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>),
-// scores every farmable pre-token protocol with the radar-2 model in lib/model.ts, writes
+// scores every farmable pre-token protocol with the radar-3 model in lib/model.ts, writes
 // the ranked board to /output/board.json, and copies this repository's dashboard/ and
 // screenshots/ to /output. Last, it writes /output/dossier.json, the summary the judge
 // reads, with the vendored make.fun library.
@@ -10,7 +10,9 @@
 // dashboard/app.css and dashboard/app.js read /output/data.js, which this program writes
 // from the same board. The board is the whole farmable pre-token universe of the snapshot
 // (198 rows on this snapshot), every row with a peer-multiple value model and an
-// eight-step farm plan.
+// eight-step farm plan, and the page accounts for every other protocol in the snapshot:
+// the benchmark table lists each priced live token with its own multiple, and the census
+// in the lede counts the rest.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
