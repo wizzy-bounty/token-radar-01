@@ -1,9 +1,9 @@
-// Token Radar's dashboard (radar-3). It reads window.RADAR (written beside
+// Token Radar's dashboard (radar-4). It reads window.RADAR (written beside
 // dashboard/ by main.ts) and renders the ranked board, a filterable table, a
 // per-protocol detail drawer with the model's own inputs and the protocol's
 // farm plan. No network: every byte it shows is in data.js.
 //
-// The value model, radar-3: implied = TVL x peerMultiple(category) x
+// The value model, radar-4: implied = TVL x peerMultiple(category) x
 // growthMult x maturityMult, where peerMultiple is the category's live-token
 // peers' median mcap/TVL shrunk toward the market median. The page recomputes
 // a row from the snapshot figures and checks the number board.json carries,
@@ -11,6 +11,13 @@
 // The farm plan is the same derivation main.ts writes to board.json:
 // category, chains, TVL and age decide the action, the capital, the hold and
 // every cost and time. No name is special-cased.
+//
+// radar-4 adds the evidence: the model band and the model panel carry the
+// out-of-sample backtest (leave-one-out and a time split on the priced live
+// tokens, computed by main.ts from the snapshot); every implied value shows
+// its peer-spread band and its farm net; every farm plan names the
+// protocol's earning mechanism and is netted to the dollar. The ranking and
+// the model arithmetic are unchanged from radar-3.
 (function () {
   'use strict';
 
@@ -26,6 +33,10 @@
     if (Math.abs(n) >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
     if (Math.abs(n) >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
     return usd.format(n);
+  }
+  function fmtUsdExact(n) {
+    if (n === null || n === undefined || !isFinite(n)) return 'n/a';
+    return usd.format(Math.round(n));
   }
   function fmtPct(n) {
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
@@ -44,6 +55,21 @@
     var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
     var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
     return Math.max(1, Math.round(row.tvl_usd * row.peer_multiple * growthMult * maturity));
+  }
+  // The peer-spread band, recomputed from the row: the middle 50% of its
+  // category's live-token multiples, carried through the same growth and
+  // maturity factors. The band's multiples ride on the row, so the page's
+  // band and the model's band are the same numbers.
+  function bandOf(row) {
+    var growth = Math.min(DATA.model.growth_cap, Math.max(DATA.model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
+    var growthMult = 1 + (growth / 100) * DATA.model.growth_weight;
+    var age = row.age_days === null || row.age_days === undefined ? DATA.model.unknown_age_days : row.age_days;
+    var maturity = DATA.model.maturity_floor + (Math.min(Math.max(age, 0), DATA.model.maturity_days) / DATA.model.maturity_days) * DATA.model.maturity_range;
+    var factor = growthMult * maturity;
+    return {
+      lo: Math.max(1, Math.round(row.tvl_usd * row.band_lo_multiple * factor)),
+      hi: Math.max(1, Math.round(row.tvl_usd * row.band_hi_multiple * factor))
+    };
   }
 
   function el(tag, attrs) {
@@ -82,6 +108,42 @@
     return 30;
   }
   function halfGas(gas) { return Math.max(2, Math.round(gas / 2)); }
+  function gasFor(p) {
+    var capital = capitalFor(p);
+    var gas = capital >= 150 ? 8 : 4;
+    return 3 + gas + halfGas(gas) + 2;
+  }
+  // The plan's whole cost: the capital the steps lock plus the gas they
+  // spend. The net is the implied value minus this number, computed here
+  // from the same derivation as the steps, so the page and the model agree.
+  function planCostOf(p) { return capitalFor(p) + gasFor(p); }
+  function planNetOf(p) { return p.implied_value_usd - planCostOf(p); }
+  // How this protocol earns, from its category alone — the mechanism the
+  // farm steps are built around. A category the map does not name earns
+  // from the fees its users pay to use it.
+  function mechanismFor(p) {
+    var c = (p.category || '').toLowerCase();
+    var name = p.name;
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return name + ' earns from the interest borrowers pay on the loans it issues.';
+    if (c.indexOf('dex') >= 0) return name + ' earns from the trading fees on every swap through its pools.';
+    if (c.indexOf('yield') >= 0) return name + ' earns from the yield its vaults harvest and the fees they charge on it.';
+    if (c.indexOf('bridge') >= 0) return name + ' earns from the fees on every transfer it bridges between chains.';
+    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return name + ' earns from staking rewards and the commission it takes on them.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('basis') >= 0) return name + ' earns from trading fees and funding payments on its markets.';
+    if (c.indexOf('prediction') >= 0) return name + ' earns from the fees on every market it settles.';
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return name + ' earns from the fees on the capital its vaults allocate.';
+    if (c.indexOf('stable') >= 0) return name + ' earns from the yield on the reserves behind its stable asset.';
+    if (c.indexOf('rwa') >= 0) return name + ' earns from the yield on the real-world assets it tokenizes.';
+    if (c.indexOf('insurance') >= 0) return name + ' earns from the premiums on the cover it sells.';
+    if (c.indexOf('chain') >= 0) return name + ' earns from the gas and the fees of the chain it runs.';
+    if (c.indexOf('farm') >= 0) return name + ' earns from the fees on the farms it runs.';
+    if (c.indexOf('index') >= 0) return name + ' earns from the management fee on its index.';
+    if (c.indexOf('payment') >= 0 || c.indexOf('card') >= 0) return name + ' earns from the fees on the payments it processes.';
+    if (c.indexOf('otc') >= 0) return name + ' earns from the spread on the orders it settles.';
+    if (c.indexOf('governance') >= 0) return name + ' earns from the fees of the protocol its governance steers.';
+    if (c.indexOf('btc') >= 0 || c.indexOf('anchor') >= 0) return name + ' earns from the yield on the BTC-backed value it holds.';
+    return name + ' earns from the fees its users pay to use it.';
+  }
   function openingAction(p, capital) {
     var c = (p.category || '').toLowerCase();
     var name = p.name;
@@ -168,7 +230,7 @@
     if (row.tvl_usd === maxTvl) parts.push(fmtUsd(row.tvl_usd) + ' of TVL with no token on record');
     if (row.age_days !== null && row.age_days !== undefined && row.age_days >= 730)
       parts.push('token-free for ' + fmtAge(row.age_days));
-    if (onWatchlist(row)) parts.push('on the house watchlist');
+    if (parts.length === 0 && onWatchlist(row)) parts.push('on the house watchlist');
     if (parts.length === 0) return 'Near the top of the board on implied value.';
     return parts.join('; ') + '.';
   }
@@ -242,6 +304,7 @@
         case 'tvl': return r.tvl_usd;
         case 'growth': return (r.change_7d === null || r.change_7d === undefined) ? -Infinity : r.change_7d;
         case 'age': return (r.age_days === null || r.age_days === undefined) ? Infinity : r.age_days;
+        case 'net': return planNetOf(r);
         default: return r.implied_value_usd;
       }
     }
@@ -275,10 +338,9 @@
     return el('section', { class: 'lede' },
       el('div', null,
         el('h1', null, DATA.board_size + ' pre-token protocols, ranked by implied value'),
-        el('p', null, 'Every protocol in the snapshot is accounted for: ' + DATA.board_size +
-          ' that record no token are ranked here (all ' + DATA.watchlist_size +
-          ' watchlist protocols among them — the watchlist is the floor, not the ceiling), ' +
-          DATA.aside_size + ' that record no token are set aside as wrapped, staked, bridged or exchange products of tokens that already trade, and ' +
+        el('p', null, 'Every protocol is accounted for: ' + DATA.board_size +
+          ' with no token on record are ranked here — all ' + DATA.watchlist_size +
+          ' watchlist protocols among them — ' + DATA.aside_size + ' are set aside as products of tokens that already trade, and ' +
           DATA.token_recorded_size + ' already record a token. Implied value is a model, not a promise.')),
       el('div', { class: 'facts' }, facts.map(function (f) {
         return el('div', { class: 'fact' }, el('span', null, f[0]), el('b', null, f[1]));
@@ -305,13 +367,20 @@
       .sort(function (a, b) { return b.multiple - a.multiple || b.peers - a.peers || (a.category < b.category ? -1 : 1); })
       .slice(0, 6)
       .map(function (m) { return el('span', { class: 'chip' }, m.category + ' ' + m.multiple.toFixed(3) + 'x'); });
+    var bt = DATA.backtest;
     return el('section', { class: 'model-band' },
       el('div', null,
         el('b', null, 'The model: '),
         'implied value = TVL x the category\'s peer multiple x a growth factor x a maturity factor. Peer multiples are the median market cap per TVL dollar of the ' +
         DATA.live_size + ' live tokens in the same category, shrunk toward the market median of ' + String(DATA.market_median_multiple) +
         'x and clamped to [0.05x, 1.00x] — the full table is below the board, and every comp is listed in the Live token tab.'),
-      el('div', { class: 'chips' }, chips));
+      el('div', { class: 'chips' }, chips),
+      el('div', { class: 'backtest' },
+        el('b', null, 'Tested out of sample: '),
+        'leave-one-out on the ' + bt.usable + ' priced tokens with a usable market cap — median prediction ÷ real market cap ×' + bt.loo.median_ratio +
+        ', median error ×' + bt.loo.median_factor + ', ' + bt.loo.within_2x_pct + '% within 2×. A time split (fit the older half, test the newer ' + bt.time_split.test +
+        ') agrees: ×' + bt.time_split.median_ratio + ', ×' + bt.time_split.median_factor +
+        '. Live multiples scatter widely, so every value below carries its peer-spread band.'));
   }
   function controlsNode() {
     var cats = {};
@@ -369,12 +438,13 @@
     var head = el('thead', null, el('tr', null,
       sortHeader('Rank', 'rank'), sortHeader('Protocol', 'name'),
       sortHeader('TVL', 'tvl', 'num'), sortHeader('7D', 'growth', 'num'), sortHeader('Age', 'age', 'num'),
-      sortHeader('Implied value', 'implied', 'num'), el('th', null, 'Token')));
+      sortHeader('Implied value', 'implied', 'num'), sortHeader('Net', 'net', 'num'), el('th', null, 'Token')));
     var bodyRows = rows.map(function (r) {
       var barPct = maxImplied > 0 ? Math.max(3, Math.round((r.implied_value_usd / maxImplied) * 100)) : 3;
       var signal = signalFor(r);
       var sub = (r.category || 'Other') + ' on ' + (r.chains || []).slice(0, 2).join(', ') + (signal ? ' · ' + signal : '');
       var changeCell = el('td', { class: 'num ' + (r.change_7d === null || r.change_7d === undefined ? '' : (r.change_7d >= 0 ? 'pos' : 'neg')) }, fmtPct(r.change_7d));
+      var band = bandOf(r);
       var tr = el('tr', { 'data-clickable': 'true', 'data-selected': String(state.selected === r.slug), onclick: function () { openSlug(r.slug); } },
         el('td', null, String(r.rank)),
         el('td', { class: 'name' }, el('b', null, r.name), el('span', { class: 'sub' }, sub)),
@@ -384,12 +454,14 @@
         el('td', { class: 'num' },
           el('span', { class: 'implied' },
             el('span', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + barPct + '%' })),
-            fmtUsd(r.implied_value_usd))),
+            fmtUsd(r.implied_value_usd)),
+          el('span', { class: 'bandline' }, 'band ' + fmtUsd(band.lo) + ' – ' + fmtUsd(band.hi))),
+        el('td', { class: 'num' }, fmtUsd(planNetOf(r))),
         el('td', null, el('span', { class: 'status' }, 'no token')));
       return tr;
     });
     var table = el('table', null,
-      el('caption', null, 'Pre-token protocols, strongest implied value first. Select a row for its model and farm plan.'),
+      el('caption', null, 'Pre-token protocols, strongest implied value first. Band = the middle 50% of the category\'s live multiples; Net = the implied value minus the farm plan\'s cost. Select a row for its model and farm plan.'),
       head, el('tbody', null, bodyRows));
     if (rows.length === 0) {
       return el('section', { class: 'panel' },
@@ -431,6 +503,7 @@
       head, el('tbody', null, bodyRows));
     return el('section', { class: 'panel' }, el('div', { class: 'table-wrap' }, table));
   }
+
   function modelPanelNode() {
     var m = DATA.model;
     var formula = 'implied = round( tvl_usd x peerMultiple(category) x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap +
@@ -444,6 +517,13 @@
           el('td', { class: 'num' }, String(mm.peers)),
           el('td', { class: 'num' }, mm.peer_median === null ? 'n/a' : mm.peer_median.toFixed(3) + 'x'));
       });
+    var bt = DATA.backtest;
+    var btRows = [
+      ['Leave-one-out', String(bt.loo.n), '×' + bt.loo.median_ratio, '×' + bt.loo.median_factor, bt.loo.within_2x_pct + '%', bt.loo.within_3x_pct + '%'],
+      ['Time split (fit older, test newer)', String(bt.time_split.test), '×' + bt.time_split.median_ratio, '×' + bt.time_split.median_factor, bt.time_split.within_2x_pct + '%', bt.time_split.within_3x_pct + '%']
+    ].map(function (cells) {
+      return el('tr', null, cells.map(function (c, i) { return el('td', { class: i === 0 ? '' : 'num' }, c); }));
+    });
     return el('section', { class: 'panel model' },
       el('h2', null, 'How the number is made'),
       el('p', null, 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked. The peer multiple is what the market already pays for a token in the same category: the live-token peers\' median market cap per dollar of TVL, shrunk toward the market median of ' + String(DATA.market_median_multiple) + 'x so a category with few peers cannot swing the board.'),
@@ -452,13 +532,28 @@
         el('caption', null, 'Peer multiples for the categories on the board. A category with fewer than ' + m.peer_min_peers + ' priced live peers falls back to the market median multiple of ' + String(DATA.market_median_multiple) + 'x.'),
         el('thead', null, el('tr', null, el('th', null, 'Category'), el('th', { class: 'num' }, 'Multiple used'), el('th', { class: 'num' }, 'Live peers'), el('th', { class: 'num' }, 'Peer median'))),
         el('tbody', null, multRows)),
+      el('h2', { class: 'backtest-title' }, 'Tested out of sample'),
+      el('p', null, 'The full model — multiple x growth x maturity — is run against the priced tokens it never saw. Leave-one-out fits the multiples on the other ' +
+        (bt.loo.n - 1) + ' tokens and predicts the one held out; the time split fits on the ' + bt.time_split.train +
+        ' tokens listed before ' + bt.time_split.cutoff + ' (plus the undated ones) and predicts the ' + bt.time_split.test +
+        ' newer ones. ' + bt.excluded + ' priced tokens record a market cap of $0 or -$1 and carry no usable price, so they are excluded from both tests and from the bands.'),
+      el('table', { class: 'mult-table backtest-table' },
+        el('caption', null, 'Median ratio is the median of predicted ÷ real market cap — 1.0 means the model sits at the centre of what the market pays. Median error is the median absolute miss as a factor.'),
+        el('thead', null, el('tr', null, el('th', null, 'Test'), el('th', { class: 'num' }, 'Tokens'), el('th', { class: 'num' }, 'Median ratio'), el('th', { class: 'num' }, 'Median error'), el('th', { class: 'num' }, 'Within 2×'), el('th', { class: 'num' }, 'Within 3×'))),
+        el('tbody', null, btRows)),
+      el('p', { class: 'note' }, 'The model is centred — leave-one-out lands at ×' + bt.loo.median_ratio +
+        ' of the real market cap — but one token\'s price is not pinned by its TVL: the median absolute miss is ×' + bt.loo.median_factor +
+        ', and only ' + bt.loo.within_2x_pct + '% land within 2×. That is the market\'s own dispersion, not a fitting failure: inside one category the live multiples span a median ×' + bt.median_category_spread +
+        ' from the 25th to the 75th percentile. So the board ranks by the central estimate and every row carries the band — the middle 50% of its category\'s live multiples, the market\'s quartiles when the category has fewer than ' + m.peer_min_peers + ' usable peers.'),
       el('p', { class: 'note' }, 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. "No token" means the snapshot records no token for the protocol — it does not prove the protocol has none. Implied value is this radar\'s own estimate, not a price and not a promise of a launch.'));
   }
 
   function detailNode(row) {
     var recomputed = impliedOf(row, DATA.model);
+    var band = bandOf(row);
+    var peerWord = row.peer_count === 1 ? '1 priced peer' : row.peer_count + ' priced peers';
     var why = 'The ' + String(DATA.market_median_multiple) + 'x market median multiple shrinks what ' + (row.category || 'Other') +
-      '\'s live peers trade at because that category has ' + row.peer_count + ' priced peers.';
+      '\'s live peers trade at because that category has ' + peerWord + '.';
     if (row.change_7d !== null && row.change_7d !== undefined) {
       why += row.change_7d >= 0
         ? ' Its TVL rose ' + row.change_7d.toFixed(2) + '% in seven days.'
@@ -472,8 +567,9 @@
 
     var steps = farmSteps(row);
     var capital = capitalFor(row);
-    var gas = capital >= 150 ? 8 : 4;
-    var totalGas = 3 + gas + halfGas(gas) + 2;
+    var gas = gasFor(row);
+    var cost = planCostOf(row);
+    var net = planNetOf(row);
     var hold = holdDaysFor(row.age_days);
 
     function pair(label, value, total) {
@@ -504,17 +600,23 @@
           pair('Growth multiplier', String(row.growth_multiplier)),
           pair('Age with no token', fmtAge(row.age_days)),
           pair('Maturity multiplier', String(row.maturity_multiplier)),
-          pair('Implied value', fmtUsd(row.implied_value_usd), true)),
+          pair('Implied value', fmtUsd(row.implied_value_usd), true),
+          pair('Plausible range (peers’ middle 50%)', fmtUsd(band.lo) + ' – ' + fmtUsd(band.hi)),
+          pair('Band multiples', row.band_lo_multiple.toFixed(3) + 'x – ' + row.band_hi_multiple.toFixed(3) + 'x')),
         el('p', { class: 'note' }, 'Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' +
-          fmtUsd(recomputed) + ', the same number board.json carries. This is an estimate, not a price.'),
+          fmtUsd(recomputed) + ', the same number board.json carries. The band is the middle 50% of ' +
+          (row.band_fallback ? 'the market\'s live multiples (this category has only ' + row.band_peers + ' usable peer' + (row.band_peers === 1 ? '' : 's') + ', so the market speaks instead)' : 'this category\'s ' + row.band_peers + ' usable live multiples') +
+          ' — half of live tokens trade inside it. This is an estimate, not a price.'),
         el('p', { class: 'why' }, 'Why this rank: ' + why)),
       el('section', { class: 'detail-section' },
-        el('h3', { class: 'watch' }, 'Watch-outs'),
-        el('ul', { class: 'watch-list' }, watchItems)),
-      el('section', { class: 'detail-section' },
         el('h3', null, 'Farm plan'),
+        el('p', { class: 'mech' }, 'How it earns: ' + mechanismFor(row)),
+        el('p', { class: 'netline' }, 'Farm net: ' + fmtUsdExact(row.implied_value_usd) + ' of implied value minus $' + cost + ' of plan cost ($' + capital + ' of capital + $' + gas + ' of gas) = ' + fmtUsdExact(net) + '. The capital comes back when the position is unwound; the gas does not.'),
         el('ol', { class: 'steps' }, stepItems),
-        el('p', { class: 'plan-total' }, 'Plan total: $' + capital + ' of capital, about $' + totalGas + ' of gas across the plan, and a ' + hold + '-day hold.')));
+        el('p', { class: 'plan-total' }, 'Plan total: $' + capital + ' of capital, about $' + gas + ' of gas across the plan, and a ' + hold + '-day hold.')),
+      el('section', { class: 'detail-section' },
+        el('h3', { class: 'watch' }, 'Watch-outs'),
+        el('ul', { class: 'watch-list' }, watchItems)));
   }
 
   var dialog = null;

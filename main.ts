@@ -1,4 +1,4 @@
-// Token launch radar — the program.
+// Token launch radar — the program (radar-4).
 //
 // Reads the sealed snapshot, scores every farmable pre-token protocol with
 // the model in lib/model.ts, and writes the handover into the output

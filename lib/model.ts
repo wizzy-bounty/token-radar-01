@@ -1,4 +1,4 @@
-// Token launch radar — the model (radar-3).
+// Token launch radar — the model (radar-4).
 //
 // Everything on the board is derived from the sealed snapshot's own figures:
 // a protocol's TVL, its seven-day growth, how long it has run with no token on
@@ -6,6 +6,13 @@
 // protocol name is ever special-cased and no number is hardcoded: the same
 // functions score every row, and the dashboard recomputes each row from the
 // figures the row itself carries, so the page and the board cannot drift.
+//
+// radar-4 adds the evidence radar-3 only asserted: the model is tested out of
+// sample (leave-one-out and a time-split backtest on the priced live tokens),
+// every implied value carries the peer-spread band its own category supports,
+// and every farm plan is netted to the dollar. The ranking and the model
+// arithmetic are unchanged — the 198 rows, their order and their implied
+// values are identical to radar-3; the gap was evidence, not formula.
 
 export interface Protocol {
   slug: string;
@@ -28,7 +35,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 // The model's constants, in one place. The dashboard prints these so a reader
 // can recompute any row by hand.
@@ -47,12 +54,20 @@ export const MODEL = {
 };
 
 const round4 = (x: number): number => Math.round(x * 10000) / 10000;
+const round2 = (x: number): number => Math.round(x * 100) / 100;
+const round1 = (x: number): number => Math.round(x * 10) / 10;
 const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x));
 
 function medianOf(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// The p-th percentile of a sorted array, by nearest rank; deterministic.
+function percentileOf(sorted: number[], p: number): number {
+  if (sorted.length === 0) return NaN;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
 }
 
 // Categories are DefiLlama's; a protocol with none groups under 'Other'.
@@ -77,6 +92,28 @@ export function recordsToken(p: Protocol): boolean {
 
 export function isPriced(p: Protocol): boolean {
   return p.mcap_usd !== null;
+}
+
+// A priced token the backtest can actually score: a positive market cap and a
+// positive TVL, so the log of predicted over actual is defined. Sixteen of
+// the 144 priced tokens record a market cap of $0 or -$1 — no usable price —
+// and are excluded from the backtest and the bands, never silently.
+export function isUsableComp(p: Protocol): boolean {
+  return p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0;
+}
+
+// The usable multiples per category: every protocol with a usable price
+// (positive market cap, positive TVL), grouped by category, each list sorted
+// ascending. buildBacktest and peerBandFor share this one list.
+function usableMultiplesByCategory(snapshot: Snapshot): Map<string, number[]> {
+  const byCategory = new Map<string, number[]>();
+  for (const p of snapshot.protocols.filter(isUsableComp)) {
+    const arr = byCategory.get(categoryOf(p)) ?? [];
+    arr.push((p.mcap_usd as number) / p.tvl_usd);
+    byCategory.set(categoryOf(p), arr);
+  }
+  for (const arr of byCategory.values()) arr.sort((a, b) => a - b);
+  return byCategory;
 }
 
 // The board's rule, the watchlist's own product rule without its TVL floor: a
@@ -161,6 +198,158 @@ export function buildPeerTable(snapshot: Snapshot): PeerTable {
   return { marketMedian, marketMedianRounded: round4(marketMedian), byCategory, ordered };
 }
 
+// --- Out-of-sample backtest -----------------------------------------------
+// The model is tested, not just fitted. Both tests predict a priced live
+// token's market cap with the model's own formula, from peers the test token
+// never entered: leave-one-out (fit on the other 127, predict the one held
+// out) and a time split (fit on the older half by listing day plus the
+// undated, predict the newer half). The headline is the median ratio —
+// whether the model sits at the centre of what the market pays — and the
+// median absolute error, because live multiples inside one category span an
+// order of magnitude and no TVL-based value can be precise about one token.
+
+export interface BacktestSplit {
+  n: number;
+  median_ratio: number;
+  median_factor: number;
+  within_2x_pct: number;
+  within_3x_pct: number;
+}
+
+export interface BacktestResult {
+  usable: number;
+  excluded: number;
+  loo: BacktestSplit;
+  time_split: BacktestSplit & { train: number; test: number; cutoff: string };
+  median_category_spread: number; // median IQR spread (q75/q25) across categories with >=5 usable peers
+}
+
+// The fitted multiple for a category given a peer set, by the model's own
+// rule: the peers' median, shrunk toward the market median, clamped.
+function fittedMultiple(catMultiples: number[], marketMedian: number): number {
+  if (catMultiples.length === 0 || catMultiples.length < MODEL.peer_min_peers) return round4(marketMedian);
+  const peerMedian = medianOf(catMultiples);
+  const shrunk =
+    (peerMedian * catMultiples.length + marketMedian * MODEL.peer_prior_weight) /
+    (catMultiples.length + MODEL.peer_prior_weight);
+  return round4(clamp(shrunk, MODEL.peer_min, MODEL.peer_max));
+}
+
+function predictComp(p: Protocol, asOfMs: number, multiple: number): number {
+  const age = ageInDays(p, asOfMs);
+  return Math.max(1, Math.round(p.tvl_usd * multiple * growthMultiplier(p.change_7d) * maturityMultiplier(age)));
+}
+
+function summariseErrors(logErrors: number[]): BacktestSplit {
+  const n = logErrors.length;
+  const medianRatio = round2(Math.exp(medianOf(logErrors)));
+  const medianFactor = round2(Math.exp(medianOf(logErrors.map((e) => Math.abs(e)))));
+  const within = (k: number): number =>
+    round1((logErrors.filter((e) => Math.abs(e) <= Math.log(k)).length / n) * 100);
+  return { n, median_ratio: medianRatio, median_factor: medianFactor, within_2x_pct: within(2), within_3x_pct: within(3) };
+}
+
+export function buildBacktest(snapshot: Snapshot): BacktestResult {
+  const asOfMs = Date.parse(`${snapshot.as_of}T00:00:00Z`);
+  const usable = snapshot.protocols.filter(isUsableComp);
+  const excluded = snapshot.protocols.filter(isPriced).length - usable.length;
+
+  // Leave-one-out over the usable comps.
+  const looErrors: number[] = [];
+  for (const p of usable) {
+    const rest = usable.filter((q) => q !== p);
+    const marketMedian = medianOf(rest.map((q) => (q.mcap_usd as number) / q.tvl_usd));
+    const catRest = rest
+      .filter((q) => categoryOf(q) === categoryOf(p))
+      .map((q) => (q.mcap_usd as number) / q.tvl_usd);
+    const multiple = fittedMultiple(catRest, marketMedian);
+    looErrors.push(Math.log(predictComp(p, asOfMs, multiple) / (p.mcap_usd as number)));
+  }
+  const loo = summariseErrors(looErrors);
+
+  // Time split: older half by listing day (plus the undated) trains, the
+  // newer half is predicted. The cut is the median listing day.
+  const dated = usable.filter((p) => p.listed_at !== null).sort((a, b) => ((a.listed_at as string) < (b.listed_at as string) ? -1 : 1));
+  const undated = usable.filter((p) => p.listed_at === null);
+  const half = Math.floor(dated.length / 2);
+  const train = [...dated.slice(0, half), ...undated];
+  const test = dated.slice(half);
+  const cutoff = dated[half].listed_at as string;
+  const trainMarketMedian = medianOf(train.map((q) => (q.mcap_usd as number) / q.tvl_usd));
+  const splitErrors: number[] = [];
+  for (const p of test) {
+    const catTrain = train
+      .filter((q) => categoryOf(q) === categoryOf(p))
+      .map((q) => (q.mcap_usd as number) / q.tvl_usd);
+    const multiple = fittedMultiple(catTrain, trainMarketMedian);
+    splitErrors.push(Math.log(predictComp(p, asOfMs, multiple) / (p.mcap_usd as number)));
+  }
+  const split = summariseErrors(splitErrors);
+
+  // How wide live multiples sit inside one category: the median, across
+  // categories with at least five usable peers, of (75th percentile /
+  // 25th percentile). This is the dispersion the backtest's error inherits.
+  const byCategory = usableMultiplesByCategory(snapshot);
+  const spreads: number[] = [];
+  for (const arr of byCategory.values()) {
+    if (arr.length < 5) continue;
+    const sorted = [...arr].sort((a, b) => a - b);
+    spreads.push(percentileOf(sorted, 0.75) / Math.max(1e-9, percentileOf(sorted, 0.25)));
+  }
+  const medianCategorySpread = round1(medianOf(spreads));
+
+  return {
+    usable: usable.length,
+    excluded,
+    loo,
+    time_split: { ...split, train: train.length, test: test.length, cutoff },
+    median_category_spread: medianCategorySpread,
+  };
+}
+
+// --- The peer-spread band -------------------------------------------------
+// An implied value is a central estimate; the band is what the live tokens
+// in its own category actually trade at. For each row the band is the middle
+// 50% of its category's usable peer multiples (25th to 75th percentile),
+// the market's own quartiles when the category has fewer than three usable
+// peers, carried through the same growth and maturity factors. It is wide
+// because live multiples are wide — the band says so instead of hiding it.
+
+export interface PeerBand {
+  lo_usd: number;
+  hi_usd: number;
+  lo_multiple: number;
+  hi_multiple: number;
+  peers: number;
+  fallback: boolean;
+}
+
+export function peerBandFor(
+  category: string,
+  tvlUsd: number,
+  growthMultiplierValue: number,
+  maturityMultiplierValue: number,
+  snapshot: Snapshot,
+): PeerBand {
+  const byCategory = usableMultiplesByCategory(snapshot);
+  const catMultiples = byCategory.get(category) ?? [];
+  const fallback = catMultiples.length < MODEL.peer_min_peers;
+  const pool = fallback
+    ? [...byCategory.values()].flat().sort((a, b) => a - b)
+    : catMultiples;
+  const loMultiple = round4(percentileOf(pool, 0.25));
+  const hiMultiple = round4(percentileOf(pool, 0.75));
+  const factor = growthMultiplierValue * maturityMultiplierValue;
+  return {
+    lo_usd: Math.max(1, Math.round(tvlUsd * loMultiple * factor)),
+    hi_usd: Math.max(1, Math.round(tvlUsd * hiMultiple * factor)),
+    lo_multiple: loMultiple,
+    hi_multiple: hiMultiple,
+    peers: catMultiples.length,
+    fallback,
+  };
+}
+
 // --- The value model ------------------------------------------------------
 
 export interface RowModel {
@@ -223,6 +412,70 @@ export function holdDaysFor(ageDays: number | null): number {
   if (ageDays < 180) return 60;
   if (ageDays < 365) return 45;
   return 30;
+}
+
+// The plan's whole cost in dollars: the capital the steps lock plus the gas
+// the steps spend. The page nets every plan against its implied value with
+// this number, so the net is the same derivation on both sides.
+export function planCostUsd(p: Protocol): number {
+  const capital = capitalFor(p);
+  const gas = capital >= 150 ? 8 : 4;
+  const halfGas = Math.max(2, Math.round(gas / 2));
+  const totalGas = 3 + gas + halfGas + 2;
+  return capital + totalGas;
+}
+
+export function planGasUsd(p: Protocol): number {
+  const capital = capitalFor(p);
+  const gas = capital >= 150 ? 8 : 4;
+  const halfGas = Math.max(2, Math.round(gas / 2));
+  return 3 + gas + halfGas + 2;
+}
+
+// How this protocol earns — one line per plan, from its category alone, the
+// snapshot's own field. It names the mechanism the farm steps are built
+// around (the fees, the yield, the interest), never an invented figure: a
+// category the map does not name earns from the fees its users pay to use it.
+export function mechanismFor(p: Protocol): string {
+  const c = (p.category ?? '').toLowerCase();
+  const name = p.name;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral'))
+    return `${name} earns from the interest borrowers pay on the loans it issues.`;
+  if (c.includes('dex'))
+    return `${name} earns from the trading fees on every swap through its pools.`;
+  if (c.includes('yield'))
+    return `${name} earns from the yield its vaults harvest and the fees they charge on it.`;
+  if (c.includes('bridge'))
+    return `${name} earns from the fees on every transfer it bridges between chains.`;
+  if (c.includes('staking') || c.includes('restak'))
+    return `${name} earns from staking rewards and the commission it takes on them.`;
+  if (c.includes('perpetual') || c.includes('derivative') || c.includes('basis'))
+    return `${name} earns from trading fees and funding payments on its markets.`;
+  if (c.includes('prediction'))
+    return `${name} earns from the fees on every market it settles.`;
+  if (c.includes('curator') || c.includes('allocator'))
+    return `${name} earns from the fees on the capital its vaults allocate.`;
+  if (c.includes('stable'))
+    return `${name} earns from the yield on the reserves behind its stable asset.`;
+  if (c.includes('rwa'))
+    return `${name} earns from the yield on the real-world assets it tokenizes.`;
+  if (c.includes('insurance'))
+    return `${name} earns from the premiums on the cover it sells.`;
+  if (c.includes('chain'))
+    return `${name} earns from the gas and the fees of the chain it runs.`;
+  if (c.includes('farm'))
+    return `${name} earns from the fees on the farms it runs.`;
+  if (c.includes('index'))
+    return `${name} earns from the management fee on its index.`;
+  if (c.includes('payment') || c.includes('card'))
+    return `${name} earns from the fees on the payments it processes.`;
+  if (c.includes('otc'))
+    return `${name} earns from the spread on the orders it settles.`;
+  if (c.includes('governance'))
+    return `${name} earns from the fees of the protocol its governance steers.`;
+  if (c.includes('btc') || c.includes('anchor'))
+    return `${name} earns from the yield on the BTC-backed value it holds.`;
+  return `${name} earns from the fees its users pay to use it.`;
 }
 
 function chainOf(p: Protocol): string {
@@ -442,6 +695,17 @@ export interface RadarRow {
   category_rank: number;
   category_size: number;
   peer_count: number;
+  value_lo_usd: number;
+  value_hi_usd: number;
+  band_lo_multiple: number;
+  band_hi_multiple: number;
+  band_peers: number;
+  band_fallback: boolean;
+  plan_cost_usd: number;
+  plan_capital_usd: number;
+  plan_gas_usd: number;
+  plan_net_usd: number;
+  mechanism: string;
 }
 
 export interface LiveRow {
@@ -471,6 +735,7 @@ export interface RadarData {
   unpriced_size: number;
   peer_multiples: { category: string; multiple: number; peers: number; peer_median: number | null }[];
   market_median_multiple: number;
+  backtest: BacktestResult;
   watchlistSlugs: string[];
   rows: RadarRow[];
   live: LiveRow[];
@@ -495,6 +760,10 @@ export function buildRadar(snapshot: Snapshot, board: BoardRow[]): RadarData {
   const rows: RadarRow[] = board.map((r) => {
     const cat = r.category ?? 'Other';
     const stat = peers.byCategory.get(cat);
+    const band = peerBandFor(cat, r.tvl_usd, r.model.growth_multiplier, r.model.maturity_multiplier, snapshot);
+    const cost = planCostUsd({ tvl_usd: r.tvl_usd } as Protocol);
+    const capital = capitalFor({ tvl_usd: r.tvl_usd } as Protocol);
+    const gas = planGasUsd({ tvl_usd: r.tvl_usd } as Protocol);
     return {
       rank: r.rank,
       slug: r.slug,
@@ -514,6 +783,17 @@ export function buildRadar(snapshot: Snapshot, board: BoardRow[]): RadarData {
       category_rank: catRank.get(r.slug) ?? 0,
       category_size: catSize.get(cat) ?? 0,
       peer_count: stat ? stat.peers : 0,
+      value_lo_usd: band.lo_usd,
+      value_hi_usd: band.hi_usd,
+      band_lo_multiple: band.lo_multiple,
+      band_hi_multiple: band.hi_multiple,
+      band_peers: band.peers,
+      band_fallback: band.fallback,
+      plan_cost_usd: cost,
+      plan_capital_usd: capital,
+      plan_gas_usd: gas,
+      plan_net_usd: r.implied_value_usd - cost,
+      mechanism: mechanismFor({ name: r.name, category: r.category } as Protocol),
     };
   });
 
@@ -558,6 +838,7 @@ export function buildRadar(snapshot: Snapshot, board: BoardRow[]): RadarData {
       peer_median: s.peerMedian === null ? null : round4(s.peerMedian),
     })),
     market_median_multiple: peers.marketMedianRounded,
+    backtest: buildBacktest(snapshot),
     watchlistSlugs: [...snapshot.watchlist],
     rows,
     live,
