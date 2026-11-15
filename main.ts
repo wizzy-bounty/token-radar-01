@@ -1,53 +1,62 @@
-// Token launch radar — the program (radar-4).
+// Token Radar — entry point.
 //
-// Reads the sealed snapshot, scores every farmable pre-token protocol with
-// the model in lib/model.ts, and writes the handover into the output
-// directory: board.json (the ranked board), data.js (the dashboard's
-// dataset), dashboard/ and screenshots/ (copied from this repository) and
-// dossier.json (built with the kit's vendor library). Standard library
-// only, no network, deterministic: two runs write the same bytes.
+// Reads the sealed snapshot, builds the radar with lib/model.ts, and writes
+// the four outputs the gate expects: board.json (the ranked board), data.js
+// (the dashboard's data, beside the page), dashboard/ and screenshots/
+// copied through, and dossier.json from vendor/makefun-board.ts. The build
+// is a pure function of the snapshot: two runs write the same bytes.
 
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, cpSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildBoard, buildRadar, dataScript, type Snapshot } from './lib/model.ts';
+import { buildRadar, type Snapshot } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-function parseArgs(argv: string[]): { input: string; output: string } {
-  let input = '/input/snapshot.json';
-  let output = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--input' && argv[i + 1]) input = argv[++i];
-    else if (argv[i] === '--output' && argv[i + 1]) output = argv[++i];
-  }
-  return { input, output };
+function argValue(flag: string): string | null {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null;
 }
 
-function main(): void {
-  const { input, output } = parseArgs(process.argv.slice(2));
-  const snapshot = JSON.parse(readFileSync(input, 'utf8')) as Snapshot;
+const inputPath =
+  argValue('--input') ?? process.env.MAKEFUN_INPUT ?? (process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : '/input/snapshot.json');
+const outputDir = argValue('--output') ?? process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const root = dirname(fileURLToPath(import.meta.url));
 
-  const board = buildBoard(snapshot);
-  const issue = boardIssue(board, snapshot);
-  if (issue !== null) {
-    console.error(`board self-check failed: ${issue}`);
-    process.exit(1);
-  }
-  const radar = buildRadar(snapshot, board);
+const snapshot = JSON.parse(readFileSync(inputPath, 'utf8')) as Snapshot;
+const radar = buildRadar(snapshot);
 
-  mkdirSync(output, { recursive: true });
-  writeFileSync(join(output, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
-  writeFileSync(join(output, 'data.js'), dataScript(radar));
-  cpSync(join(here, 'dashboard'), join(output, 'dashboard'), { recursive: true });
-  cpSync(join(here, 'screenshots'), join(output, 'screenshots'), { recursive: true });
-  const dossier = buildDossier(output, { text_max_bytes: 65536 });
-  writeFileSync(join(output, 'dossier.json'), dossier);
+mkdirSync(outputDir, { recursive: true });
 
-  console.log(
-    `token radar: ${board.length} rows, ${radar.live_size} live comps, dossier ${dossier.length} bytes -> ${output}`,
-  );
-}
+// board.json — the ranked board the gate reads.
+const board = {
+  model: radar.version,
+  as_of: radar.asOf,
+  rows: radar.rows.map((r) => ({
+    slug: r.slug,
+    name: r.name,
+    rank: r.rank,
+    implied_value_usd: r.impliedValueUsd,
+    band_low_usd: r.bandLowUsd,
+    band_high_usd: r.bandHighUsd,
+    tvl_usd: r.tvlUsd,
+    category: r.category,
+    verdict: r.verdict,
+    farm_steps: r.farmSteps,
+  })),
+};
+writeFileSync(join(outputDir, 'board.json'), JSON.stringify(board, null, 1) + '\n');
 
-main();
+// data.js — everything the dashboard renders, beside the page.
+writeFileSync(join(outputDir, 'data.js'), 'window.RADAR_DATA = ' + JSON.stringify(radar) + ';\n');
+
+// The dashboard and the screenshots are handed in as they stand in the repo.
+cpSync(join(root, 'dashboard'), join(outputDir, 'dashboard'), { recursive: true });
+cpSync(join(root, 'screenshots'), join(outputDir, 'screenshots'), { recursive: true });
+
+// dossier.json — the judge's view, built by the kit's own library.
+const dossier = buildDossier(outputDir, { text_max_bytes: 65536 });
+writeFileSync(join(outputDir, 'dossier.json'), dossier);
+
+console.log(
+  `radar-5: ${radar.rows.length} rows, ${radar.comps.length} comps, dossier ${dossier.length} bytes -> ${outputDir}`,
+);

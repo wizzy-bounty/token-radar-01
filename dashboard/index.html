@@ -3,11 +3,96 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token launch radar: 198 pre-token protocols priced off 144 live tokens, with farm plans</title>
+<title>Launch Radar — pre-token protocols priced off a size curve fitted on the tokens that already trade</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<div id="app" aria-busy="true"></div>
+<header class="masthead">
+  <p class="eyebrow" id="eyebrow">Token launch radar</p>
+  <h1 id="headline">Pre-token protocols, ranked by implied value</h1>
+  <p class="lede" id="lede"></p>
+  <div class="facts" id="facts"></div>
+</header>
+
+<main>
+  <section class="band" id="model-band" aria-label="The value model">
+    <div class="band-head">
+      <h2>The model: a size curve, tested out of sample</h2>
+      <p class="band-sub" id="model-sub"></p>
+    </div>
+    <div class="band-grid">
+      <div class="panel">
+        <h3>Fitted curve</h3>
+        <p class="formula" id="formula"></p>
+        <p class="note" id="fit-note"></p>
+        <p class="note" id="curve-range"></p>
+      </div>
+      <div class="panel">
+        <h3>Backtest — leave-one-out on the priced tokens</h3>
+        <table class="mini" id="backtest-table"></table>
+        <p class="note" id="backtest-note"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="board-section" aria-label="The board">
+    <div class="board-head">
+      <h2 id="board-title">The board</h2>
+      <div class="tabs" role="tablist">
+        <button id="tab-board" class="tab active" type="button">Pre-token board</button>
+        <button id="tab-live" class="tab" type="button">Live tokens — the comp set</button>
+      </div>
+    </div>
+    <div class="controls" id="controls">
+      <label>Search <input id="q" type="search" placeholder="name or slug"></label>
+      <label>Category <select id="cat"></select></label>
+      <label>Sort <select id="sort">
+        <option value="rank">Implied value</option>
+        <option value="tvl">TVL</option>
+        <option value="growth">7d growth</option>
+        <option value="tenure">Token-free tenure</option>
+        <option value="band">Band low end</option>
+      </select></label>
+      <label class="check"><input id="watch-only" type="checkbox"> Watchlist only</label>
+      <span class="count" id="row-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="board" id="board-table"></table>
+      <table class="board hidden" id="live-table"></table>
+    </div>
+    <p class="note" id="live-note"></p>
+  </section>
+
+  <section id="start-here" aria-label="Start here">
+    <h2>Start here — the five to farm first</h2>
+    <div class="picks" id="picks"></div>
+  </section>
+
+  <section id="audit" aria-label="Audit tables">
+    <h2>Audit — category multiples against the curve</h2>
+    <p class="note">The old way priced a protocol at its TVL times its category's median multiple. The table below is that
+    model's raw material, kept so the comparison stays honest: the backtest above is run against exactly these medians.
+    The curve's category offset is each category's mean residual from the curve, shrunk by n/(n+15) — a category with
+    three priced tokens moves the fit a fifth as much as its raw residual says.</p>
+    <div class="table-wrap"><table class="board slim" id="category-table"></table></div>
+    <h3 style="margin-top:20px">The curve by size</h3>
+    <p class="note">What the fitted curve pays per dollar of TVL, by the protocol's size — the multiple compression
+    the flat median model cannot express.</p>
+    <table class="mini" id="curve-table" style="max-width:560px"></table>
+    <p class="note" id="method-note"></p>
+  </section>
+</main>
+
+<footer>
+  <p>Implied value is this radar's own claim about what a launch would be worth if the protocol's record stayed as it
+  is; it is not a prediction that a token will be issued. A protocol here <em>records no token</em> in the snapshot —
+  that is DefiLlama's record, not proof that none exists. Farm plans are written for a reader deciding where to be
+  active before a launch; their costs are the plan's own gas, fees and time, and their verdicts are netted at the low
+  end of each row's value band.</p>
+</footer>
+
+<dialog id="detail"></dialog>
+
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>

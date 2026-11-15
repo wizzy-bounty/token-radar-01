@@ -8,8 +8,9 @@ The best token launch radar: a program that reads a sealed snapshot of every
 protocol DefiLlama tracks and writes a web dashboard ranking the protocols that
 record no token yet by what their launch would be worth — each with the steps to
 farm it, the risks to watch, and the live-token benchmarks the price rests on.
-Every implied value carries its peer-spread band, the value model is tested
-out of sample, and every farm plan is netted to the dollar.
+Every implied value carries a band from the model's own leave-one-out
+spread, the value model is tested out of sample, and every farm plan is
+netted at the band's low end.
 
 Built for the make.fun `token-radar-01` competition ($1,325, 1st place $1,000).
 No entry fee, no network at runtime.
@@ -21,57 +22,68 @@ No entry fee, no network at runtime.
 and writes to `/output`:
 
 - `board.json` — **198 rows**: every farmable pre-token protocol in the snapshot
-  (the 40 watchlist slugs plus all 158 pre-token protocols below the floor), ranked
-  by implied value, each with an eight-step farm plan.
+  (all 40 watchlist protocols covered, plus all 158 other pre-token protocols),
+  ranked by implied value, each with an eight-step farm plan.
 - `data.js` — the dashboard's dataset, beside the page.
 - `dashboard/` — a static page (no network): a "start here" shortlist of the five
   to farm first, the value model stated on the first screen, a searchable,
-  sortable board with a signal in every row, a peer-spread band and a Net column
-  (implied value minus the farm plan's cost) on every row, category and chain
-  filters, a watchlist-only toggle, a detail view per protocol with the full model
-  breakdown, its watch-outs, its farm plan with the earning mechanism and the
-  netted verdict, a benchmark tab listing **all 144 priced live tokens with each
-  one's market cap per TVL dollar**, and a model panel with the formula, the
-  peer-multiples table and the out-of-sample backtest. Every protocol in the
+  sortable board with a signal in every row, a band from the model's own
+  leave-one-out spread and a Net column (the band's low end minus the farm
+  plan's cost) on every row, category and chain filters, a watchlist-only
+  toggle, a detail view per protocol with the full model breakdown, its
+  watch-outs, its farm plan with the earning mechanism and the netted verdict,
+  a benchmark tab listing **all 128 priced live tokens with a usable price,
+  each with its market cap per TVL dollar and the multiple the curve assigns
+  its size**, and a model panel with the size-curve formula, the
+  category-offset table and the out-of-sample backtest. Every protocol in the
   snapshot is accounted for on the page: 198 ranked, 144 set aside as wrapped,
   staked, bridged or exchange products of tokens that already trade, and 416
-  that already record a token (144 of them priced, the rest without a market
-  price in the snapshot).
+  that already record a token (128 of them with a usable price, 16 carrying a
+  price of zero, and 272 with no price in the snapshot) — a census of
+  198 + 144 + 416 = 758.
 - `screenshots/` — the board, a protocol's detail view, and a filtered view.
 - `dossier.json` — built with the kit's `vendor/makefun-board.ts`.
 
-## The model (radar-4)
+## The model (radar-5)
+
+Implied value comes from a size curve — market cap grows slower than TVL, so
+the implied multiple falls as a protocol grows — not from a flat
+category-median multiple:
 
 ```
-implied = round(TVL × peerMultiple(category) × growthMult × maturityMult)
+log10(value) = 3.02 + 0.52 x log10(TVL) + a category offset shrunk by n/(n+15)
 ```
 
-- `peerMultiple` — the category's live-token peers' median market-cap/TVL, shrunk
-  toward the whole market's median (0.169x) with a prior weight of 5, clamped to
-  [0.05, 1.00]. Computed at runtime from the snapshot; no multiple is hardcoded
-  and no protocol name is ever special-cased. Categories with fewer than 3 live
-  peers use the market median — the detail view flags every row where that
-  fallback is in play.
-- `growthMult = 1 + clamp(change_7d, -60, 120)/100 × 0.5`
-- `maturityMult = 0.6 + min(age_days, 1095)/1095 × 0.4` (unknown age = 365 days)
+- The curve is fitted at runtime from the snapshot; no multiple is hardcoded
+  and no protocol name is ever special-cased. The category offset is each
+  category's mean residual from the curve, shrunk toward zero by n/(n+15),
+  where n is the category's number of priced comps, so thin categories barely
+  move the fit. Growth and tenure are shown as signals on each row, never
+  priced in.
+- The fit rests on the 128 priced tokens with a usable price. Of the 416
+  protocols that record a token, 16 records carry a price of zero and are
+  excluded as evidence, and 272 record a token with no price.
 
-**Tested out of sample.** Leave-one-out over the 128 priced tokens with a
-usable market cap: median prediction ÷ real market cap ×0.97, median error
-×5.05, 20.3% of predictions within 2× of the real cap. A time split (train on
-the 80 oldest, test on the 48 newest, cutoff 2024-02-18) agrees: ×0.75, ×5.61,
-20.8% within 2×. Live multiples scatter widely, so every implied value below
-carries its peer-spread band — the middle 50% of its category's live multiples,
-applied to the same TVL and multipliers.
+**Tested out of sample.** A leave-one-out backtest on the 128 comps — each
+token priced by a model fitted without it, then compared with the market cap
+it actually carries — gives the curve model a median error of x3.70 against
+x4.89 for the old category-median model. A time split (fit the older half,
+price the newer) agrees: x3.01 against x4.82. Each row's band is the model's
+own LOO spread — the middle half of its leave-one-out errors, applied to that
+row's implied value.
 
-**Farm plans netted to the dollar.** Each plan states its cost (the capital the
-steps put at risk plus the gas they burn) and its net: implied value minus plan
-cost. The capital comes back when the position is unwound; the gas does not.
-Each plan also names the mechanism it actually earns by — trading fees, points,
-staking rewards, or LP fees — from the protocol's category and the snapshot's
-numbers.
+**Farm plans netted at the band's low end.** Each plan states its cost and
+its net at the band's low end (band low minus plan cost), and carries a
+Farm / Thin / Skip verdict on that netted figure. Each plan also names the
+mechanism it actually earns by — for example trading fees, borrower interest,
+vault yield, or funding and basis — from the protocol's category and the
+snapshot's numbers.
 
-Top of the board on this snapshot: Steakhouse Financial ($367.3M), Sentora
-Curator ($352.8M), Gauntlet ($218.7M). "No token" means the snapshot records no
+The board covers 198 pre-token protocols, with all 40 watchlist protocols
+covered. Census: 198 ranked + 144 set aside + 416 token-recording = 758.
+
+Top of the board on this snapshot: Sentora Curator ($101.6M), Steakhouse
+Financial ($101.5M), Gauntlet ($75.9M). "No token" means the snapshot records no
 token for the protocol — it does not prove the protocol has none. Implied value
 is this radar's own estimate, not a price and not a promise of a launch.
 
