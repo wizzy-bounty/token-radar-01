@@ -15,6 +15,18 @@
 </header>
 
 <main>
+  <section class="evidence" id="evidence" aria-label="Out-of-sample evidence">
+    <div class="ev-grid" id="ev-grid"></div>
+    <p class="note" id="ev-note"></p>
+  </section>
+
+  <section id="start-here" aria-label="Start here">
+    <h2>Start here — the five to farm first</h2>
+    <p class="note">Ranked by launch score: implied value weighted by launch readiness. Each card shows the
+    value band, the token odds from its category's own record, and the readiness gauge with its six parts.</p>
+    <div class="picks" id="picks"></div>
+  </section>
+
   <section class="band" id="model-band" aria-label="The value model">
     <div class="band-head">
       <h2>The model: a size curve, tested out of sample</h2>
@@ -47,7 +59,9 @@
       <label>Search <input id="q" type="search" placeholder="name or slug"></label>
       <label>Category <select id="cat"></select></label>
       <label>Sort <select id="sort">
+        <option value="score" selected>Launch score</option>
         <option value="rank">Implied value</option>
+        <option value="readiness">Readiness</option>
         <option value="tvl">TVL</option>
         <option value="growth">7d growth</option>
         <option value="tenure">Token-free tenure</option>
@@ -61,11 +75,6 @@
       <table class="board hidden" id="live-table"></table>
     </div>
     <p class="note" id="live-note"></p>
-  </section>
-
-  <section id="start-here" aria-label="Start here">
-    <h2>Start here — the five to farm first</h2>
-    <div class="picks" id="picks"></div>
   </section>
 
   <section id="audit" aria-label="Audit tables">

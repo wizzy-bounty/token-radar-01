@@ -41,6 +41,10 @@ const board = {
     tvl_usd: r.tvlUsd,
     category: r.category,
     verdict: r.verdict,
+    readiness_score: r.readiness,
+    score_usd: r.scoreUsd,
+    token_odds: Math.round(r.tokenOdds * 1000) / 1000,
+    value_rank: r.valueRank,
     farm_steps: r.farmSteps,
   })),
 };
@@ -58,5 +62,5 @@ const dossier = buildDossier(outputDir, { text_max_bytes: 65536 });
 writeFileSync(join(outputDir, 'dossier.json'), dossier);
 
 console.log(
-  `radar-5: ${radar.rows.length} rows, ${radar.comps.length} comps, dossier ${dossier.length} bytes -> ${outputDir}`,
+  `radar-6: ${radar.rows.length} rows, ${radar.comps.length} comps, dossier ${dossier.length} bytes -> ${outputDir}`,
 );

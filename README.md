@@ -15,6 +15,23 @@ netted at the band's low end.
 Built for the make.fun `token-radar-01` competition ($1,325, 1st place $1,000).
 No entry fee, no network at runtime.
 
+## radar-6 (current)
+
+The radar-5 size curve, plus three things computed from the same sealed
+snapshot: **token odds** — the share of a protocol's category peers that
+already record a token, smoothed toward the global rate, with a Brier score
+(0.210) against the base rate (0.248); **band honesty** — 50.8% of real
+market caps land inside the printed P25–P75 band (stated 50%), 80.5% inside
+P10–P90 (stated 80%), both measured leave-one-out; and **launch readiness** —
+a 0–100 gauge from scale, momentum, token-free tenure, chain breadth, the
+watchlist and priced-peer evidence. The board ranks by **launch score** =
+implied value × (0.5 + readiness/100), with the pure value rank kept beside
+it. The top five return as rich feature cards (value band graphic, token
+odds, readiness gauge) in the first viewport, and the detail view shows the
+readiness breakdown. Steakhouse Financial leads the board on score
+($121.8M, readiness 70/100); Sentora Curator still leads on implied value
+alone ($101.6M).
+
 ## What it does
 
 `main.ts` (Node 22, standard library only) reads `/input/snapshot.json`

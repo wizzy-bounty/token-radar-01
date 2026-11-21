@@ -1,4 +1,4 @@
-// Token Radar model — radar-5.
+// Token Radar model — radar-6.
 //
 // The value model is a size curve, not a flat multiple. Across the protocols
 // that already trade, market cap grows slower than TVL: a log-log fit on the
@@ -9,8 +9,21 @@
 // carries what the curve cannot see. Every figure the dashboard shows — the
 // fit, the backtest, the bands — is recomputed here from the snapshot, so
 // the page and the code cannot disagree.
+//
+// radar-6 adds three things on top of the radar-5 curve, all computed from
+// the same sealed snapshot: (a) token odds — the share of a protocol's
+// category peers that already record a token, smoothed toward the global
+// rate, with a Brier score against the base rate so the page can say whether
+// the odds beat guessing the average; (b) band honesty — the share of priced
+// comps whose real market cap lands inside the printed band, measured
+// leave-one-out; (c) launch readiness — a 0–100 gauge from six public
+// signals (scale, momentum, token-free tenure, chain breadth, watchlist,
+// priced-peer evidence), and a launch score = implied value × (0.5 +
+// readiness/100) that the board now ranks by. Value alone is what a launch
+// would be worth; readiness is how close the protocol looks to being able to
+// launch it. Neither is a prediction that a token will be issued.
 
-export const MODEL_VERSION = 'radar-5';
+export const MODEL_VERSION = 'radar-6';
 
 export interface ProtocolRec {
   slug: string;
@@ -44,6 +57,15 @@ export interface CompRow {
   residualFactor: number;
 }
 
+export interface ReadinessParts {
+  scale: number;
+  momentum: number;
+  tenure: number;
+  breadth: number;
+  house: number;
+  evidence: number;
+}
+
 export interface BoardRow {
   slug: string;
   name: string;
@@ -55,6 +77,7 @@ export interface BoardRow {
   ageDays: number | null;
   watchlist: boolean;
   rank: number;
+  valueRank: number;
   impliedValueUsd: number;
   bandLowUsd: number;
   bandHighUsd: number;
@@ -63,6 +86,10 @@ export interface BoardRow {
   categoryMedianMultiple: number | null;
   categoryRank: number;
   categoryCount: number;
+  tokenOdds: number;
+  readiness: number;
+  readinessParts: ReadinessParts;
+  scoreUsd: number;
   signal: string;
   watchOuts: string[];
   farmSteps: string[];
@@ -107,6 +134,16 @@ export interface RadarData {
     newSplitMedianFactor: number;
     bandLowFactor: number;
     bandHighFactor: number;
+    bandLow10Factor: number;
+    bandHigh90Factor: number;
+    withinBandPct: number;
+    withinWidePct: number;
+  };
+  odds: {
+    brier: number;
+    baseBrier: number;
+    globalRate: number;
+    n: number;
   };
   categoryStats: { category: string; comps: number; medianMultiple: number; offsetLog: number }[];
   rows: BoardRow[];
@@ -404,6 +441,31 @@ function buildPlan(
   return { steps, costUsd: Math.round(cost * 100) / 100, hours: Math.round(hours * 10) / 10, netLowUsd: netLow, verdict };
 }
 
+// ------------------------------------------------- launch readiness
+// A 0–100 gauge from six public signals, each scored on a stated scale so
+// the page can show the breakdown and a reader can recompute it. The parts
+// are deliberately boring — size, momentum, tenure, breadth, the house list,
+// priced-peer evidence — because the gauge is a readiness check, not a
+// second value model: value says what a launch would be worth, readiness
+// says how close the protocol looks to being able to launch it.
+
+function readinessOf(p: ProtocolRec, ctx: { ageDays: number | null; watchlist: boolean; catComps: number }): {
+  score: number;
+  parts: ReadinessParts;
+} {
+  const scale = p.tvl_usd >= 1e9 ? 25 : p.tvl_usd >= 5e8 ? 20 : p.tvl_usd >= 1e8 ? 15 : p.tvl_usd >= 5e7 ? 10 : 5;
+  const g = p.change_7d;
+  const momentum = g === null ? 5 : g >= 15 ? 20 : g >= 5 ? 15 : g >= 0 ? 10 : g >= -10 ? 5 : 0;
+  const a = ctx.ageDays;
+  const tenure = a === null ? 5 : a >= 730 ? 20 : a >= 365 ? 15 : a >= 180 ? 10 : a >= 90 ? 5 : 0;
+  const breadth = p.chains.length >= 5 ? 10 : p.chains.length >= 3 ? 7 : p.chains.length === 2 ? 4 : 0;
+  const house = ctx.watchlist ? 15 : 0;
+  const n = ctx.catComps;
+  const evidence = n >= 10 ? 10 : n >= 5 ? 7 : n >= 3 ? 4 : 0;
+  const parts = { scale, momentum, tenure, breadth, house, evidence };
+  return { score: scale + momentum + tenure + breadth + house + evidence, parts };
+}
+
 // ------------------------------------------------------------------ build
 
 export function buildRadar(snapshot: Snapshot): RadarData {
@@ -442,6 +504,54 @@ export function buildRadar(snapshot: Snapshot): RadarData {
   const newSorted = [...newErr].sort((x, y) => x - y);
   const bandLowFactor = Math.pow(10, quantile(newSorted, 0.25));
   const bandHighFactor = Math.pow(10, quantile(newSorted, 0.75));
+  const bandLow10Factor = Math.pow(10, quantile(newSorted, 0.1));
+  const bandHigh90Factor = Math.pow(10, quantile(newSorted, 0.9));
+
+  // Band honesty, measured leave-one-out: for each priced token, price it
+  // with a model fitted without it and ask whether the market cap it
+  // actually carries lands inside the band the page would have printed.
+  // The printed band claims 50% coverage (P25–P75); the wide band 80%.
+  let withinBand = 0;
+  let withinWide = 0;
+  for (let i = 0; i < comps.length; i++) {
+    const train = comps.filter((_, j) => j !== i);
+    const p = comps[i];
+    const pred = Math.pow(10, predictLog(fitCurve(train), p.lt, p.category));
+    const ratio = p.mcapUsd / pred;
+    if (ratio >= bandLowFactor && ratio <= bandHighFactor) withinBand++;
+    if (ratio >= bandLow10Factor && ratio <= bandHigh90Factor) withinWide++;
+  }
+  const withinBandPct = (withinBand / comps.length) * 100;
+  const withinWidePct = (withinWide / comps.length) * 100;
+
+  // Token odds: the share of a protocol's category peers that already
+  // record a token, smoothed toward the global rate (3 pseudo-protocols at
+  // the global rate) so thin categories stay near the average. The Brier
+  // score says whether the category odds beat guessing the global rate for
+  // every protocol — lower is better, computed over the whole snapshot.
+  const hasToken = (p: ProtocolRec): boolean => p.gecko_id !== null || p.symbol !== null || p.mcap_usd !== null;
+  const globalRate = protocols.filter(hasToken).length / protocols.length;
+  const catToken = new Map<string, { n: number; k: number }>();
+  for (const p of protocols) {
+    const key = p.category ?? '';
+    const e = catToken.get(key) ?? { n: 0, k: 0 };
+    e.n++;
+    if (hasToken(p)) e.k++;
+    catToken.set(key, e);
+  }
+  const oddsOf = (category: string | null): number => {
+    const e = catToken.get(category ?? '') ?? { n: 0, k: 0 };
+    return (e.k + 3 * globalRate) / (e.n + 3);
+  };
+  let brierSum = 0;
+  let baseSum = 0;
+  for (const p of protocols) {
+    const actual = hasToken(p) ? 1 : 0;
+    brierSum += (oddsOf(p.category) - actual) ** 2;
+    baseSum += (globalRate - actual) ** 2;
+  }
+  const brier = brierSum / protocols.length;
+  const baseBrier = baseSum / protocols.length;
 
   const catMedian = new Map<string, number>();
   const catCount = new Map<string, number>();
@@ -483,6 +593,12 @@ export function buildRadar(snapshot: Snapshot): RadarData {
     else if (ageDays !== null) signal = `Token-free for ${ageDays} days`;
     else signal = 'Records no token';
     const plan = buildPlan(p, { bandLowUsd: bandLow, watchOuts });
+    const ready = readinessOf(p, {
+      ageDays,
+      watchlist: watch.has(p.slug),
+      catComps: catCount.get(p.category ?? '') ?? 0,
+    });
+    const scoreUsd = Math.round(implied * (0.5 + ready.score / 100));
     return {
       slug: p.slug,
       name: p.name,
@@ -494,6 +610,7 @@ export function buildRadar(snapshot: Snapshot): RadarData {
       ageDays,
       watchlist: watch.has(p.slug),
       rank: 0,
+      valueRank: 0,
       impliedValueUsd: implied,
       bandLowUsd: bandLow,
       bandHighUsd: bandHigh,
@@ -502,6 +619,10 @@ export function buildRadar(snapshot: Snapshot): RadarData {
       categoryMedianMultiple: catMedian.get(p.category ?? '') ?? null,
       categoryRank: 0,
       categoryCount: 0,
+      tokenOdds: oddsOf(p.category),
+      readiness: ready.score,
+      readinessParts: ready.parts,
+      scoreUsd,
       signal,
       watchOuts,
       farmSteps: plan.steps,
@@ -512,7 +633,13 @@ export function buildRadar(snapshot: Snapshot): RadarData {
     };
   });
 
-  rows.sort((x, y) => y.impliedValueUsd - x.impliedValueUsd || y.tvlUsd - x.tvlUsd || (x.slug < y.slug ? -1 : 1));
+  // The board ranks by launch score — implied value weighted by readiness —
+  // and keeps the pure value rank beside it so the two orders stay visible.
+  [...rows].sort((x, y) => y.impliedValueUsd - x.impliedValueUsd || y.tvlUsd - x.tvlUsd || (x.slug < y.slug ? -1 : 1))
+    .forEach((r, i) => {
+      r.valueRank = i + 1;
+    });
+  rows.sort((x, y) => y.scoreUsd - x.scoreUsd || y.tvlUsd - x.tvlUsd || (x.slug < y.slug ? -1 : 1));
   rows.forEach((r, i) => {
     r.rank = i + 1;
   });
@@ -572,6 +699,16 @@ export function buildRadar(snapshot: Snapshot): RadarData {
       newSplitMedianFactor: splitMedianFactor(comps, 'curve'),
       bandLowFactor,
       bandHighFactor,
+      bandLow10Factor,
+      bandHigh90Factor,
+      withinBandPct,
+      withinWidePct,
+    },
+    odds: {
+      brier,
+      baseBrier,
+      globalRate,
+      n: protocols.length,
     },
     categoryStats,
     rows,

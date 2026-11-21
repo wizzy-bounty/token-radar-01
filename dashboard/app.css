@@ -205,3 +205,35 @@ dialog#detail button.close {
   background: var(--amber); color: var(--ink); border: 0; border-radius: 8px;
   padding: 7px 16px; font: inherit; font-weight: 700; cursor: pointer;
 }
+
+/* Evidence strip — six recomputed stats, first viewport. */
+.evidence { margin-bottom: 20px; }
+.ev-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+@media (max-width: 1100px) { .ev-grid { grid-template-columns: repeat(3, 1fr); } }
+.ev {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--teal);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+}
+.ev .num { display: block; font-size: 17px; font-weight: 700; color: var(--amber-soft); font-variant-numeric: tabular-nums; }
+.ev .lab { font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* Feature cards — the five to farm first, rich. */
+.pick.feature { border-top: 3px solid var(--teal); }
+.pick .bandbar { display: block; width: 100%; height: 10px; margin: 7px 0 4px; }
+.pick .p-odds, .pick .p-ready { display: block; font-size: 13px; color: var(--muted); margin-top: 4px; }
+.odds-bar, .gauge {
+  display: inline-block; vertical-align: middle;
+  width: 84px; height: 7px; border-radius: 99px;
+  background: var(--ink-2); border: 1px solid var(--line);
+  margin-left: 6px; overflow: hidden;
+}
+.odds-bar span, .gauge-fill {
+  display: block; height: 100%; background: var(--teal); border-radius: 99px;
+}
+.gauge { width: 110px; }
+.gauge-fill { background: var(--amber); }
+.rnum { font-weight: 700; color: var(--amber-soft); margin-right: 6px; font-variant-numeric: tabular-nums; }
+table.board .gauge { width: 64px; }
