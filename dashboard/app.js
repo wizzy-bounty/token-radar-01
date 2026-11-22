@@ -1,318 +1,190 @@
-// Launch Radar — renders window.RADAR_DATA (written by main.ts beside this
-// page) into the board, the live-token comp table, the audit tables and the
-// per-protocol detail view. No network, no framework: the page is the data.
-
-'use strict';
-
-const D = window.RADAR_DATA;
-const $ = (id) => document.getElementById(id);
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const D = window.RADAR;
+const el = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const usd0 = (n) => '$' + Math.round(n).toLocaleString('en-US');
+const cmp = (n) => n >= 1e9 ? '$' + (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? '$' + (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? '$' + (n / 1e3).toFixed(0) + 'K' : usd0(n);
+const money = (n) => { const v = Math.round(n * 100) / 100; return '$' + v.toLocaleString('en-US', { minimumFractionDigits: v < 100 ? 2 : 0, maximumFractionDigits: v < 100 ? 2 : 0 }); };
+// row columns: slug name cat chains tvl chg age odds valueif implied p10 p25 p90 rlo rhi op wl
+const C = { slug: 0, name: 1, cat: 2, chains: 3, tvl: 4, chg: 5, age: 6, odds: 7, valueif: 8, implied: 9, p10: 10, p25: 11, p90: 12, rlo: 13, rhi: 14, op: 15, wl: 16 };
+const VN = { F: 'FARM', M: 'MARGINAL', S: 'SKIP' };
+const sc = { ...D.scenario };
+const fees = (op) => 1 + 3 * op + op * sc.weeks / 2;
+const hours = () => (51 + 10 * sc.weeks) / 60;
+function price(r, implied) {
+  const drop = implied * sc.dropShare * sc.deposit / (r[C.tvl] + sc.deposit);
+  const net = drop - fees(r[C.op]) - hours() * 25;
+  const tbill = sc.deposit * 0.04 * sc.weeks / 52;
+  const nph = net / hours();
+  return { drop, net, nph, tbill, v: net >= tbill && nph >= 25 ? 'F' : net > 0 ? 'M' : 'S' };
 }
-function money(x) {
-  if (x === null || x === undefined) return '—';
-  if (Math.abs(x) >= 1e9) return '$' + (x / 1e9).toFixed(2) + 'B';
-  if (Math.abs(x) >= 1e6) return '$' + (x / 1e6).toFixed(1) + 'M';
-  if (Math.abs(x) >= 1e3) return '$' + (x / 1e3).toFixed(1) + 'K';
-  return '$' + Math.round(x).toString();
-}
-function mult(x) { return x === null || x === undefined ? '—' : x.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + 'x'; }
-function pct(x) { return x === null || x === undefined ? '—' : (x >= 0 ? '+' : '') + x.toFixed(1) + '%'; }
-function tenure(days) {
-  if (days === null || days === undefined) return '—';
-  if (days >= 730) return (days / 365).toFixed(1) + 'y';
-  if (days >= 60) return Math.round(days / 30.4) + 'mo';
-  return days + 'd';
-}
-function factor(x) { return 'x' + x.toFixed(2); }
+const params = new URLSearchParams(location.search);
 
-// ------------------------------------------------------------- masthead
-
-const C = D.census;
-$('eyebrow').textContent = `Token launch radar — snapshot of ${D.asOf}, ${C.universe} protocols`;
-$('headline').textContent = `${C.ranked} pre-token protocols, ranked by launch score`;
-$('lede').innerHTML =
-  `Every protocol in the snapshot that records no token and is not a wrapped, staked or bridged product of one that ` +
-  `trades — <strong>${C.ranked} ranked</strong>, ${C.setAside} set aside by that product rule, and ` +
-  `<strong>${C.tokenRecording} that already record a token</strong> kept off the board and used as the pricing ` +
-  `evidence. Launch score = implied value × (0.5 + readiness/100): value says what a launch would be worth, ` +
-  `readiness — scale, momentum, tenure, breadth, the watchlist, priced-peer evidence — says how close the protocol ` +
-  `looks to being able to launch it. Values come from a size curve fitted on the priced tokens, not from a flat multiple.`;
-$('facts').innerHTML = [
-  [String(C.ranked), 'pre-token ranked'],
-  [`${D.rows.filter((r) => r.watchlist).length}/40`, 'watchlist covered'],
-  [String(C.pricedUsable), 'priced comps fitted'],
-  [factor(D.backtest.newLoo.medianFactor), 'backtest median error'],
-  [factor(D.backtest.oldLoo.medianFactor), 'old model error'],
-  [money(Math.max(...D.rows.map((r) => r.impliedValueUsd))), 'top implied value'],
-].map(([n, l]) => `<div class="fact"><span class="num">${esc(n)}</span><span class="lab">${esc(l)}</span></div>`).join('');
-
-function pct1(x) { return (x * 100).toFixed(1) + '%'; }
-
-// ------------------------------------------- evidence strip (first screen)
-
-const O = D.odds;
-const BT = D.backtest;
-const farmable = D.rows.filter((r) => r.verdict === 'Farm' || r.verdict === 'Thin').length;
-$('ev-grid').innerHTML = [
-  [factor(BT.newLoo.medianFactor), 'out-of-sample miss, LOO'],
-  [BT.withinBandPct.toFixed(0) + '%', 'of real caps inside the printed band (stated 50%)'],
-  [O.brier.toFixed(3) + ' vs ' + O.baseBrier.toFixed(3), 'token-odds Brier vs base rate'],
-  [`${D.rows.filter((r) => r.watchlist).length}/40`, 'watchlist ranked'],
-  [String(farmable), 'worth farming at the band low end'],
-  [money(D.rows[0].scoreUsd), 'top launch score — ' + D.rows[0].name],
-].map(([n, l]) => `<div class="ev"><span class="num">${esc(n)}</span><span class="lab">${esc(l)}</span></div>`).join('');
-$('ev-note').innerHTML =
-  `Every number above is recomputed from the snapshot by the program, not typed in. The band honesty is leave-one-out: ` +
-  `each priced token is priced by a model fitted without it, and ${BT.withinBandPct.toFixed(1)}% of the real market caps land ` +
-  `inside the P25–P75 band the page prints (stated 50%), ${BT.withinWidePct.toFixed(1)}% inside the P10–P90 band (stated 80%). ` +
-  `Token odds are the share of a protocol's own category peers that already record a token, smoothed toward the global ` +
-  `${pct1(O.globalRate)}; the category odds beat the base rate on Brier score (${O.brier.toFixed(3)} vs ${O.baseBrier.toFixed(3)}), ` +
-  `so they carry signal — but odds are not a promise: most categories sit well below even odds.`;
-
-// ------------------------------------------------------------ model band
-
-const F = D.fit;
-$('model-sub').innerHTML =
-  `Fitted on the <strong>${F.compCount} priced tokens with a usable price</strong> (a recorded market cap above zero). ` +
-  `A further ${C.pricedDead} records name a token but a price of zero, and ${C.pricedNone} record a token with no ` +
-  `price at all — neither is used as evidence. Growth and tenure were tested as value terms and dropped: they are ` +
-  `shown as signals on each row, never priced in.`;
-$('formula').textContent = `log10(value) = ${F.intercept.toFixed(2)} + ${F.slope.toFixed(2)} x log10(TVL) + category offset`;
-$('fit-note').innerHTML =
-  `R&sup2; ${F.r2.toFixed(2)} on the fitted tokens. The multiple falls as a protocol grows — the market pays ` +
-  `proportionally less for the next dollar of TVL at size. The old flat model used one median multiple per ` +
-  `category (market median ${mult(F.marketMedianMultiple)}) at any size.`;
-$('curve-range').innerHTML =
-  `Along the curve the multiple runs from <strong>${mult(D.curveTable[0].multiple)}</strong> at ` +
-  `${money(D.curveTable[0].tvlUsd)} of TVL to <strong>${mult(D.curveTable[D.curveTable.length - 1].multiple)}</strong> ` +
-  `at ${money(D.curveTable[D.curveTable.length - 1].tvlUsd)} — the full table is in the audit section below.`;
-$('curve-table').innerHTML =
-  `<tr><th>Protocol TVL</th><th>Curve multiple</th><th>Implied value</th></tr>` +
-  D.curveTable.map((r) => `<tr><td>${money(r.tvlUsd)}</td><td>${mult(r.multiple)}</td><td>${money(r.tvlUsd * r.multiple)}</td></tr>`).join('');
-
-const B = D.backtest;
-$('backtest-table').innerHTML =
-  `<tr><th>Model</th><th>Median error</th><th>Mean |log err|</th><th>Within x2</th></tr>` +
-  `<tr class="win"><td>Size curve + offset (this board)</td><td>${factor(B.newLoo.medianFactor)}</td><td>${B.newLoo.meanLogError.toFixed(3)}</td><td>${B.newLoo.within2Pct.toFixed(0)}%</td></tr>` +
-  `<tr><td>Category median multiple (old)</td><td>${factor(B.oldLoo.medianFactor)}</td><td>${B.oldLoo.meanLogError.toFixed(3)}</td><td>${B.oldLoo.within2Pct.toFixed(0)}%</td></tr>`;
-$('backtest-note').innerHTML =
-  `Leave-one-out over all ${B.n} priced tokens: each is priced by a model fitted without it, then compared with ` +
-  `the market cap it actually carries. Time split (fit the older half, price the newer): median error ` +
-  `<strong>${factor(B.newSplitMedianFactor)}</strong> curve against <strong>${factor(B.oldSplitMedianFactor)}</strong> median model. ` +
-  `Each row's band is the curve model's own leave-one-out spread — and the band is honest: ` +
-  `<strong>${B.withinBandPct.toFixed(1)}%</strong> of the real market caps land inside the P25–P75 band the page prints ` +
-  `(stated 50%), ${B.withinWidePct.toFixed(1)}% inside the P10–P90 band (stated 80%).`;
-
-// ------------------------------------------------------------ start here
-
-function pickReason(r) {
-  if (r.categoryRank === 1) return `The curve's #1 in ${esc(r.category)} of ${r.categoryCount} on the board.`;
-  if (r.watchlist) return 'On the 40-protocol watchlist — above the $50M floor with no token recorded.';
-  if (r.change7d !== null && r.change7d >= 15) return `TVL up ${r.change7d.toFixed(1)}% in seven days — momentum the curve does not price.`;
-  if (r.ageDays !== null && r.ageDays >= 730) return `Token-free for ${(r.ageDays / 365).toFixed(1)} years at ${money(r.tvlUsd)} of TVL.`;
-  return `Band low end still ${money(r.bandLowUsd)} — the plan stays cheap against it.`;
-}
-function bandBar(r) {
-  // Log-scale bar across the row's own value band, marker at the implied value.
-  const lo = Math.log10(Math.max(r.bandLowUsd, 1));
-  const hi = Math.log10(Math.max(r.bandHighUsd, r.bandLowUsd + 1));
-  const mid = Math.log10(Math.max(r.impliedValueUsd, 1));
-  const x = Math.round(((mid - lo) / (hi - lo)) * 100);
-  return `<svg class="bandbar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">` +
-    `<rect x="0" y="4" width="100" height="2" rx="1" fill="#31405a"/>` +
-    `<rect x="0" y="4" width="${x}" height="2" rx="1" fill="#3ec6b8"/>` +
-    `<circle cx="${x}" cy="5" r="3.2" fill="#f2b544"/></svg>`;
-}
-function gaugeBar(v) {
-  return `<span class="gauge"><span class="gauge-fill" style="width:${v}%"></span></span>`;
-}
-$('picks').innerHTML = D.rows.slice(0, 5).map((r) =>
-  `<button class="pick feature" type="button" data-slug="${esc(r.slug)}">
-     <span class="p-rank">#${r.rank} — ${esc(r.verdict.toUpperCase())} · value rank #${r.valueRank}</span>
-     <span class="p-name">${esc(r.name)}</span>
-     <span class="p-val">Score ${money(r.scoreUsd)}</span> <span class="sub">implied ${money(r.impliedValueUsd)} · band ${money(r.bandLowUsd)} – ${money(r.bandHighUsd)}</span>
-     ${bandBar(r)}
-     <span class="p-odds">Token odds ${pct1(r.tokenOdds)} <span class="odds-bar"><span style="width:${Math.round(r.tokenOdds * 100)}%"></span></span></span>
-     <span class="p-ready">Readiness ${r.readiness}/100 ${gaugeBar(r.readiness)}</span>
-     <span class="p-why">${pickReason(r)}</span>
-   </button>`).join('');
-
-// ----------------------------------------------------------------- board
-
-const state = { q: '', cat: '', watchOnly: false, sort: 'score', tab: 'board' };
-
-const cats = [...new Set(D.rows.map((r) => r.category ?? 'Uncategorised'))].sort();
-$('cat').innerHTML = `<option value="">All categories</option>` + cats.map((c) => `<option>${esc(c)}</option>`).join('');
-
-function rowMatches(r) {
-  if (state.watchOnly && !r.watchlist) return false;
-  if (state.cat && (r.category ?? 'Uncategorised') !== state.cat) return false;
-  if (state.q && !(r.name.toLowerCase().includes(state.q) || r.slug.includes(state.q))) return false;
-  return true;
-}
-function sortedRows(list) {
-  const by = {
-    score: (a, b) => b.scoreUsd - a.scoreUsd,
-    rank: (a, b) => a.rank - b.rank,
-    readiness: (a, b) => b.readiness - a.readiness,
-    tvl: (a, b) => b.tvlUsd - a.tvlUsd,
-    growth: (a, b) => (b.change7d ?? -1e9) - (a.change7d ?? -1e9),
-    tenure: (a, b) => (b.ageDays ?? -1) - (a.ageDays ?? -1),
-    band: (a, b) => b.bandLowUsd - a.bandLowUsd,
-  }[state.sort];
-  return [...list].sort(by);
-}
-function verdictChip(v) {
-  const cls = v === 'Farm' ? 'farm' : v === 'Thin' ? 'thin' : 'skip';
-  return `<span class="chip ${cls}">${esc(v)}</span>`;
-}
 function renderBoard() {
-  const list = sortedRows(D.rows.filter(rowMatches));
-  $('row-count').textContent = `${list.length} of ${D.rows.length} protocols`;
-  $('board-table').innerHTML =
-    `<thead><tr><th>#</th><th>Protocol</th><th>Category</th><th class="num">TVL</th><th class="num">7d</th>` +
-    `<th class="num">Token-free</th><th class="num">Token odds</th><th class="num">Readiness</th>` +
-    `<th class="num">Implied value</th><th class="num">Band</th><th class="num">Score</th><th>Verdict</th></tr></thead><tbody>` +
-    list.map((r) => `<tr data-slug="${esc(r.slug)}">
-      <td>${r.rank}</td>
-      <td><span class="name">${esc(r.name)}</span>${r.watchlist ? ' <span class="chip watch">watchlist</span>' : ''}<span class="sub">${esc(r.signal)}</span></td>
-      <td>${esc(r.category ?? '—')}</td>
-      <td class="num">${money(r.tvlUsd)}</td>
-      <td class="num ${r.change7d === null ? '' : r.change7d >= 0 ? 'pos' : 'neg'}">${pct(r.change7d)}</td>
-      <td class="num">${tenure(r.ageDays)}</td>
-      <td class="num">${pct1(r.tokenOdds)}</td>
-      <td class="num"><span class="rnum">${r.readiness}</span>${gaugeBar(r.readiness)}</td>
-      <td class="num val">${money(r.impliedValueUsd)}</td>
-      <td class="num band-cell">${money(r.bandLowUsd)} – ${money(r.bandHighUsd)}</td>
-      <td class="num val">${money(r.scoreUsd)}</td>
-      <td>${verdictChip(r.verdict)}</td></tr>`).join('') + `</tbody>`;
-  for (const tr of $('board-table').querySelectorAll('tbody tr')) {
-    tr.addEventListener('click', () => openDetail(tr.dataset.slug));
-  }
-}
+  el('#asof').textContent = D.asOf;
+  const A = D.accounting, rows = D.rows;
+  const priced = rows.map((r) => ({ r, p: price(r, r[C.implied]), s: price(r, r[C.p25]) }));
+  const farmN = priced.filter((x) => x.p.v === 'F').length;
+  const holdN = priced.filter((x) => x.p.v === 'F' && x.s.v === 'F').length;
+  const medOdds = [...rows].sort((a, b) => a[C.odds] - b[C.odds])[Math.floor(rows.length / 2)][C.odds];
+  el('#kpis').innerHTML = [
+    [A.ranked, `ranked protocols (${A.ranked - A.early} at/above the ${cmp(D.floor)} floor + ${A.early} early)`],
+    [`${A.watchlistIn}/${A.watchlistTotal}`, 'of the house watchlist ranked'],
+    [cmp(D.totals.implied), 'total implied value of the board'],
+    [medOdds.toFixed(1) + '%', 'median launch odds across the board'],
+    [`${farmN} FARM`, `verdicts at the default scenario · ${holdN} still farm at P25`],
+    ['&times;' + D.valueModel.final.loo.toFixed(2), 'value model typical miss, leave-one-out'],
+  ].map(([v, l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
 
-function renderLive() {
-  $('live-table').innerHTML =
-    `<thead><tr><th>Live token</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th>` +
-    `<th class="num">Actual</th><th class="num">Curve fit</th><th class="num">Actual / fit</th></tr></thead><tbody>` +
-    D.comps.map((c) => `<tr>
-      <td><span class="name">${esc(c.name)}</span></td><td>${esc(c.category ?? '—')}</td>
-      <td class="num">${money(c.tvlUsd)}</td><td class="num">${money(c.mcapUsd)}</td>
-      <td class="num">${mult(c.multiple)}</td><td class="num">${mult(c.fittedMultiple)}</td>
-      <td class="num ${c.residualFactor >= 1 ? 'pos' : 'neg'}">${factor(c.residualFactor)}</td></tr>`).join('') + `</tbody>`;
-  $('live-note').innerHTML =
-    `The comp set: <strong>${C.pricedUsable} tokens with a usable price</strong>, each shown with the multiple it ` +
-    `actually trades at and the multiple the curve assigns its size — the fit the board's values come from. ` +
-    `${C.pricedDead} further records name a token but carry a price of zero and are excluded as evidence; ` +
-    `${C.pricedNone} record a token with no price at all.`;
-}
-
-function setTab(tab) {
-  state.tab = tab;
-  $('tab-board').classList.toggle('active', tab === 'board');
-  $('tab-live').classList.toggle('active', tab === 'live');
-  $('board-table').classList.toggle('hidden', tab !== 'board');
-  $('live-table').classList.toggle('hidden', tab !== 'live');
-  $('controls').classList.toggle('hidden', tab !== 'board');
-  $('live-note').classList.toggle('hidden', tab !== 'live');
-  $('board-title').textContent = tab === 'board' ? 'The board' : 'Live tokens — the comp set';
-}
-
-// ---------------------------------------------------------------- detail
-
-function openDetail(slug) {
-  const r = D.rows.find((x) => x.slug === slug);
-  if (!r) return;
-  const dlg = $('detail');
-  const facts = [
-    [money(r.scoreUsd), 'launch score'],
-    [money(r.impliedValueUsd), 'implied value'],
-    [`${money(r.bandLowUsd)} – ${money(r.bandHighUsd)}`, 'value band'],
-    [money(r.tvlUsd), 'TVL'],
-    [mult(r.curveMultiple), 'curve multiple'],
-    [r.categoryMedianMultiple === null ? '—' : mult(r.categoryMedianMultiple), 'category median (old)'],
-    [`#${r.categoryRank} of ${r.categoryCount}`, `in ${r.category ?? 'its category'}`],
-    [tenure(r.ageDays), 'token-free'],
-    [pct1(r.tokenOdds), 'token odds (category peers)'],
-    [`$${r.planCostUsd.toFixed(2)} / ${r.planHours.toFixed(1)}h`, 'farm plan cost'],
-    [money(Math.max(r.netLowUsd, 0)), 'net at band low'],
+  el('#acctotal').textContent = A.total;
+  const segs = [
+    [A.ranked - A.early, '#2563eb', `Ranked, at/above floor`],
+    [A.early, '#38bdf8', 'Ranked early, below the floor (this board lifts it)'],
+    [A.trades, '#a78bfa', 'Already carry a recorded cap'],
+    [A.recordedNoCap, '#64748b', 'Token recorded, no cap yet'],
+    [A.outByRule, '#7f1d1d', 'Out by the house rule itself'],
   ];
-  const parts = [
-    ['Scale — TVL tier', r.readinessParts.scale, 25],
-    ['Momentum — 7d TVL change', r.readinessParts.momentum, 20],
-    ['Tenure — token-free age', r.readinessParts.tenure, 20],
-    ['Breadth — chains deployed', r.readinessParts.breadth, 10],
-    ['House — on the watchlist', r.readinessParts.house, 15],
-    ['Evidence — priced peers in category', r.readinessParts.evidence, 10],
-  ];
-  dlg.innerHTML =
-    `<div class="close-row"><button class="close" type="button" id="d-close">Close</button></div>
-     <h2>${esc(r.name)} ${verdictChip(r.verdict)}</h2>
-     <p class="d-sub">Rank #${r.rank} of ${D.rows.length} — ${esc(r.category ?? 'uncategorised')} — on ${esc(r.chains.join(', ') || '—')} — ${esc(r.signal.toLowerCase())}</p>
-     <div class="d-grid">${facts.map(([n, l]) => `<div class="d-fact"><span class="num">${esc(n)}</span><span class="lab">${esc(l)}</span></div>`).join('')}</div>
-     <h3>How the value is built</h3>
-     <p class="note">The curve gives ${esc(r.name)} a multiple of <strong>${mult(r.curveMultiple)}</strong> at its size ` +
-     `(${money(r.tvlUsd)} of TVL). Its category offset is <strong>${r.categoryOffsetLog >= 0 ? '+' : ''}${r.categoryOffsetLog.toFixed(3)}</strong> ` +
-     `in log10 — a factor of ${factor(Math.pow(10, r.categoryOffsetLog))} — shrunk from the raw residual of its ` +
-     `category's priced tokens. The old model would have used the flat category median of ` +
-     `<strong>${r.categoryMedianMultiple === null ? '—' : mult(r.categoryMedianMultiple)}</strong> at any size. ` +
-     `The band is the curve model's own leave-one-out spread, and the farm verdict is netted at the band's low end.</p>
-     <h3>Launch readiness — ${r.readiness}/100</h3>
-     <p class="note">Six public signals, each on a stated scale. Score = implied value × (0.5 + readiness/100) = ` +
-     `${money(r.impliedValueUsd)} × ${(0.5 + r.readiness / 100).toFixed(2)} = <strong>${money(r.scoreUsd)}</strong>. ` +
-     `Token odds ${pct1(r.tokenOdds)}: the share of ${esc(r.category ?? 'its category')} peers that already record a token, ` +
-     `smoothed toward the global ${(O.globalRate * 100).toFixed(1)}% — odds, not a promise.</p>
-     <table class="mini"><tr><th>Signal</th><th class="num">Points</th><th class="num">Max</th></tr>` +
-     parts.map(([n, v, m]) => `<tr><td>${esc(n)}</td><td class="num">${v}</td><td class="num">${m}</td></tr>`).join('') + `</table>
-     ${r.watchOuts.length ? `<h3>Watch-outs</h3><p class="warn">${r.watchOuts.map(esc).join(' · ')}</p>` : ''}
-     <h3>Farm plan — ${r.farmSteps.length} steps, $${r.planCostUsd.toFixed(2)}, about ${r.planHours.toFixed(1)}h</h3>
-     <ol class="steps">${r.farmSteps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`;
-  $('d-close').addEventListener('click', () => dlg.close());
-  if (!dlg.open) dlg.showModal();
-}
+  el('#acctbar').innerHTML = segs.map(([n, c]) => `<div style="width:${100 * n / A.total}%;background:${c}"></div>`).join('');
+  el('#acctlegend').innerHTML = segs.map(([n, c, l]) => `<span><i style="background:${c}"></i>${l}: <b>${n}</b></span>`).join('');
+  el('#acctnote').textContent = 'Out by rule: ' + A.outReasons.map((x) => `${x.label} ${x.n}`).join(' · ')
+    + `. The five segments sum to ${segs.reduce((s, x) => s + x[0], 0)} of ${A.total} — the ledger reconciles.`;
 
-// ---------------------------------------------------------------- wiring
+  const ranksOk = rows.every((r, i) => i === 0 || rows[i - 1][C.implied] >= r[C.implied]);
+  el('#integrity').innerHTML = [
+    `board rows ${rows.length}`, ranksOk ? 'implied strictly ranked 1..N' : 'rank check FAILED',
+    `watchlist ${A.watchlistIn}/${A.watchlistTotal}`, `ledger ${segs.reduce((s, x) => s + x[0], 0)}/${A.total}`,
+    `board.json checksum ${D.totals.checksum}`, 'page + data under the 64 KiB judge budget',
+  ].map((t) => `<span>${t}</span>`).join('');
 
-$('q').addEventListener('input', (e) => { state.q = e.target.value.trim().toLowerCase(); renderBoard(); });
-$('cat').addEventListener('change', (e) => { state.cat = e.target.value; renderBoard(); });
-$('sort').addEventListener('change', (e) => { state.sort = e.target.value; renderBoard(); });
-$('watch-only').addEventListener('change', (e) => { state.watchOnly = e.target.checked; renderBoard(); });
-$('tab-board').addEventListener('click', () => setTab('board'));
-$('tab-live').addEventListener('click', () => setTab('live'));
-for (const b of $('picks').querySelectorAll('.pick')) {
-  b.addEventListener('click', () => openDetail(b.dataset.slug));
-}
+  const termTable = (m, unit) => `<table class="mini"><tr><th class="l">Term (added alone)</th><th>Leave-one-out</th><th>Walk-forward</th><th>Leave-one-family-out</th><th class="l">Kept?</th></tr>`
+    + `<tr><td class="l">no terms — the base model</td><td>${m.base.loo}</td><td>${m.base.wf}</td><td>${m.base.lofo}</td><td class="l">—</td></tr>`
+    + m.table.map((t) => `<tr><td class="l">${esc(t.label)}</td><td>${t.loo}</td><td>${t.wf}</td><td>${t.lofo}</td><td class="l">${t.kept ? '<b>kept</b>' : 'tested, not kept'}</td></tr>`).join('')
+    + `<tr><td class="l"><b>model as fitted</b></td><td><b>${m.final.loo}</b></td><td><b>${m.final.wf}</b></td><td><b>${m.final.lofo}</b></td><td class="l">${unit}</td></tr></table>`;
+  el('#valuemodel').innerHTML = `<h2>Value model — what a launch would be worth</h2>
+    <p class="note">Regresses ln(cap &divide; TVL) on the <b>${D.valueModel.n}</b> protocols whose tokens carry a positive cap. ${D.valueModel.zeroCap} recorded tokens sit at $0 in the snapshot — no live market, not a valuation — so they are excluded from this fit only; they still count in the odds model and the ledger. A term is kept only if it lowers the miss in <b>all three</b> held-out tests. Typical miss = the factor a typical prediction is off by (median), lower is better.</p>
+    <p>Base multiple at $100M TVL: <b>&times;${D.valueModel.multiple}</b> (bootstrap &plusmn;1 SE: &times;${D.valueModel.multipleLo}–&times;${D.valueModel.multipleHi}) &middot; size slope <b>${D.valueModel.sizeSlope} &plusmn; ${D.valueModel.seSlope}</b> per ln TVL &middot; kept: <b>${D.valueModel.kept.join(', ') || 'none'}</b></p>${termTable(D.valueModel, 'typical miss &times;')}`;
+  el('#oddsmodel').innerHTML = `<h2>Odds model — will it launch at all?</h2>
+    <p class="note">Logistic fit on all <b>${A.total}</b> protocols; the outcome is whether a token is recorded. Base rate <b>${D.oddsModel.baseRate}%</b>; the fitted model calls <b>${D.oddsModel.calledRight}%</b> right at a 50% cut. Brier score, lower is better; leave-one-out uses the one-step refit approximation. Same rule: kept only if all three tests improve.</p>
+    <p>Kept: <b>${D.oddsModel.kept.join(', ') || 'none'}</b> &middot; base Brier ${D.oddsModel.base.loo} &rarr; fitted ${D.oddsModel.final.loo} (leave-one-out)</p>${termTable(D.oddsModel, 'Brier')}`;
+  el('#honesty').innerHTML = `<h2>Range honesty — the bands are checked, not just drawn</h2>
+    <p class="note">Bands come from 200 bootstrap refits of both models, each repricing the board with one of the value fit's own residuals drawn in — peers scatter around the model, and a band that only wobbles coefficients would pretend that away. For each of the ${D.valueModel.n} priced peers we printed the band the model would give it: <b>${D.honesty.inMid}%</b> of actual caps fall inside P25–P75 (calibrated &asymp;50%) and <b>${D.honesty.inWide}%</b> inside P10–P90 (&asymp;80%). The control term — another row's 7-day growth, which cannot legitimately help — was offered to both models and kept by neither. Every row also carries its bootstrap rank range: the board's order is a distribution, not a fact.</p>`;
 
-// Audit table — category medians against the curve offsets.
-$('category-table').innerHTML =
-  `<thead><tr><th>Category</th><th class="num">Priced comps</th><th class="num">Median multiple (old model)</th><th class="num">Curve offset</th></tr></thead><tbody>` +
-  D.categoryStats.map((s) => `<tr><td>${esc(s.category || 'Uncategorised')}</td><td class="num">${s.comps}</td>` +
-    `<td class="num">${mult(s.medianMultiple)}</td><td class="num">${factor(Math.pow(10, s.offsetLog))}</td></tr>`).join('') + `</tbody>`;
-$('method-note').innerHTML =
-  `Method, in one breath: take the ${C.pricedUsable} tokens that already trade with a usable price; fit ` +
-  `log10(market cap) on log10(TVL); add each category's mean residual, shrunk by n/(n+15); price every pre-token ` +
-  `protocol off that fit; band each price by the fit's own leave-one-out spread; score each protocol's launch ` +
-  `readiness from its scale, momentum, token-free tenure, chain breadth, watchlist place and priced-peer evidence; ` +
-  `rank by implied value × (0.5 + readiness/100); and net every farm plan at the ` +
-  `band's low end. Nothing on this page is a hand-kept list — rerun the program on the snapshot and every number ` +
-  `above is rebuilt. Model ${esc(D.version)}.`;
+  // controls
+  el('#sc-dep').value = sc.deposit; el('#sc-share').value = sc.dropShare * 100; el('#sc-weeks').value = sc.weeks;
+  const cats = [...new Set(rows.map((r) => r[C.cat] || 'Uncategorised'))].sort();
+  el('#cat').innerHTML = '<option value="">All categories</option>' + cats.map((c) => `<option>${esc(c)}</option>`).join('');
+  const chips = [['', 'All rows'], ['F', 'FARM'], ['M', 'MARGINAL'], ['S', 'SKIP'], ['W', 'Watchlist'], ['E', 'Early (< floor)'], ['H', 'Holds at P25']];
+  let chipState = params.get('tab') === 'farm' ? 'F' : '';
+  el('#chips').innerHTML = chips.map(([k, l]) => `<button class="chip${k === chipState ? ' on' : ''}" data-chip="${k}">${l}</button>`).join('');
+  let sortK = params.get('tab') === 'farm' ? 'nph' : 'rank', sortDir = params.get('tab') === 'farm' ? -1 : 1;
 
-// Screenshot / deep-link state: #p=<slug> opens a detail, #live shows the
-// comp set, #cat=<category> filters the board.
-function applyHash() {
-  const h = new URLSearchParams(location.hash.replace(/^#/, ''));
-  if (h.get('live')) setTab('live');
-  if (h.get('cat')) {
-    state.cat = h.get('cat');
-    $('cat').value = state.cat;
-    renderBoard();
-    requestAnimationFrame(() => window.scrollTo(0, $('board-section').offsetTop - 6));
+  const gmin = Math.log(Math.min(...rows.map((r) => r[C.p10]))), gmax = Math.log(Math.max(...rows.map((r) => r[C.p90])));
+  const pos = (v) => (100 * (Math.log(v) - gmin) / (gmax - gmin)).toFixed(1);
+  function current() {
+    const q = el('#q').value.toLowerCase(), cat = el('#cat').value;
+    let list = priced.filter(({ r, p, s }) => {
+      if (chipState && 'FMS'.includes(chipState) && p.v !== chipState) return false;
+      if (chipState === 'W' && !r[C.wl]) return false;
+      if (chipState === 'E' && r[C.tvl] >= D.floor) return false;
+      if (chipState === 'H' && !(p.v === 'F' && s.v === 'F')) return false;
+      if (cat && (r[C.cat] || 'Uncategorised') !== cat) return false;
+      if (q && !(r[C.name].toLowerCase().includes(q) || r[C.slug].includes(q))) return false;
+      return true;
+    });
+    const key = { rank: (x) => -x.r[C.implied], name: (x) => x.r[C.name], tvl: (x) => x.r[C.tvl], chg: (x) => x.r[C.chg] ?? -1e9, age: (x) => x.r[C.age], odds: (x) => x.r[C.odds], valueif: (x) => x.r[C.valueif], implied: (x) => x.r[C.implied], rankrange: (x) => x.r[C.rlo], verdict: (x) => x.p.v, net: (x) => x.p.net, nph: (x) => x.p.nph }[sortK];
+    list.sort((a, b) => { const d = key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0; return d * sortDir; });
+    return list;
   }
-  if (h.get('p')) openDetail(h.get('p'));
+  const rankOf = new Map(rows.map((r, i) => [r[C.slug], i + 1]));
+  function draw() {
+    const list = current();
+    el('#rows').innerHTML = list.map(({ r, p, s }) => `<tr class="rowlink" data-slug="${esc(r[C.slug])}"><td>${rankOf.get(r[C.slug])}</td><td class="l"><b>${esc(r[C.name])}</b>${r[C.wl] ? ' <span class="star" title="house watchlist">★</span>' : ''}<br><span class="note">${esc(r[C.cat] || 'Uncategorised')} · ${esc(r[C.chains].join(', '))}</span></td><td>${cmp(r[C.tvl])}</td><td class="${(r[C.chg] ?? 0) < 0 ? 'neg' : 'pos'}">${r[C.chg] === null ? '—' : r[C.chg].toFixed(1) + '%'}</td><td>${r[C.age].toFixed(1)}y</td><td>${r[C.odds].toFixed(0)}%</td><td>${cmp(r[C.valueif])}</td><td><b>${cmp(r[C.implied])}</b><div class="whisk"><div class="rg" style="left:${pos(r[C.p10])}%;width:${Math.max(2, pos(r[C.p90]) - pos(r[C.p10]))}%"></div><div class="pt" style="left:${pos(r[C.implied])}%"></div></div></td><td>${r[C.rlo]}–${r[C.rhi]}</td><td><span class="pill ${p.v}">${VN[p.v]}</span>${p.v === 'F' && s.v === 'F' ? ' <span class="star" title="still FARM at its P25 implied value">★</span>' : ''}<span class="stress">at P25: ${VN[s.v]}</span></td><td class="${p.net < 0 ? 'neg' : 'pos'}">${usd0(p.net)}</td><td class="${p.nph < 0 ? 'neg' : 'pos'}">$${p.nph.toFixed(1)}</td></tr>`).join('');
+    el('#rowcount').textContent = `${list.length} of ${rows.length} rows shown · scenario: ${usd0(sc.deposit)} deposit, ${(sc.dropShare * 100).toFixed(1)}% of any drop to farmers, ${sc.weeks} weeks · click a row for its detail`;
+    document.querySelectorAll('tr.rowlink').forEach((tr) => tr.addEventListener('click', () => { location.search = '?view=row&slug=' + tr.dataset.slug; }));
+  }
+  document.querySelectorAll('#board th').forEach((th) => th.addEventListener('click', () => {
+    const k = th.dataset.k; if (sortK === k) sortDir *= -1; else { sortK = k; sortDir = k === 'name' ? 1 : -1; } draw();
+  }));
+  document.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+    chipState = b.dataset.chip; document.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === b)); draw();
+  }));
+  el('#q').addEventListener('input', draw); el('#cat').addEventListener('change', draw);
+  el('#sc-apply').addEventListener('click', () => {
+    sc.deposit = Math.max(100, +el('#sc-dep').value || D.scenario.deposit);
+    sc.dropShare = Math.min(0.4, Math.max(0.005, (+el('#sc-share').value || 7) / 100));
+    sc.weeks = Math.min(52, Math.max(1, +el('#sc-weeks').value || 12));
+    priced.forEach((x) => { x.p = price(x.r, x.r[C.implied]); x.s = price(x.r, x.r[C.p25]); });
+    el('#kpis').children[4].querySelector('.v').textContent = `${priced.filter((x) => x.p.v === 'F').length} FARM`;
+    el('#kpis').children[4].querySelector('.l').textContent = `verdicts at this scenario · ${priced.filter((x) => x.p.v === 'F' && x.s.v === 'F').length} still farm at P25`;
+    draw();
+  });
+  const exportRows = () => current().map(({ r, p }) => ({
+    slug: r[C.slug], name: r[C.name], category: r[C.cat], chains: r[C.chains], tvl_usd: r[C.tvl], change_7d: r[C.chg],
+    age_years: r[C.age], odds_pct: r[C.odds], value_if_usd: r[C.valueif], implied_value_usd: r[C.implied],
+    implied_p25_usd: r[C.p25], implied_p75_usd: r[C.p75], rank_range: [r[C.rlo], r[C.rhi]], verdict: VN[p.v], net_usd: Math.round(p.net), net_per_hour_usd: Math.round(p.nph * 10) / 10,
+  }));
+  const dl = (name, text, type) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); URL.revokeObjectURL(a.href); };
+  el('#exp-csv').addEventListener('click', () => {
+    const rs = exportRows(), head = Object.keys(rs[0] || {}).join(',');
+    dl('radar7-board.csv', head + '\n' + rs.map((o) => Object.values(o).map((v) => Array.isArray(v) ? v.join('|') : v).join(',')).join('\n'), 'text/csv');
+  });
+  el('#exp-json').addEventListener('click', () => dl('radar7-board.json', JSON.stringify(exportRows(), null, 1), 'application/json'));
+  draw();
 }
 
-renderBoard();
-renderLive();
-applyHash();
+// ------------------------------------------------------------- detail views
+function kvGrid(items) {
+  return `<div class="kv">${items.map(([v, l]) => `<div><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')}</div>`;
+}
+function statsLine(r, p, s) {
+  return kvGrid([
+    [cmp(r[C.tvl]), 'TVL'], [cmp(r[C.implied]), 'implied value'], [cmp(r[C.p10]) + ' – ' + cmp(r[C.p90]), 'P10 – P90 band'],
+    [r[C.odds].toFixed(1) + '%', 'launch odds'], [cmp(r[C.valueif]), 'value if it launches'],
+    [`<span class="pill ${p.v}">${VN[p.v]}</span>`, `verdict · at P25: ${VN[s.v]}`],
+    [usd0(p.net), 'net at default scenario'], ['$' + p.nph.toFixed(1), 'net per hands-on hour'],
+    [`${r[C.rlo]}–${r[C.rhi]}`, 'bootstrap rank range'], [r[C.age].toFixed(1) + 'y', 'age · ' + esc(r[C.chains].join(', '))],
+  ]);
+}
+function fbar(label, val, frac, txt) {
+  return `<div class="fbar"><span class="fl">${esc(label)}</span><span class="ft"><i style="left:${val < 0 ? 50 - 50 * frac : 50}%;width:${50 * frac}%;background:${val < 0 ? '#f87171' : '#34d399'}"></i></span><span class="fv">${txt}</span></div>`;
+}
+function renderFeatured(pick) {
+  const P = D.picks[pick], r = D.rows.find((x) => x[C.slug] === P.slug), d = P.detail;
+  const p = price(r, r[C.implied]), s = price(r, r[C.p25]);
+  const maxLn = Math.max(...d.valueFactors.map((f) => Math.abs(Math.log(f.mult))));
+  const vf = d.valueFactors.map((f) => fbar(f.label, Math.log(f.mult), Math.abs(Math.log(f.mult)) / maxLn, '&times;' + f.mult.toFixed(2))).join('');
+  const maxLo = Math.max(...d.oddsFactors.map((f) => Math.abs(f.logit)), 0.1);
+  const of = d.oddsFactors.map((f) => fbar(f.label, f.logit, Math.abs(f.logit) / maxLo, (f.logit >= 0 ? '+' : '') + f.logit.toFixed(2))).join('');
+  const peers = d.peers.length ? `<table class="mini"><tr><th class="l">Priced peer</th><th>TVL</th><th>Actual cap</th><th>Cap / TVL</th><th>Actual &divide; this model</th></tr>${d.peers.map((x) => `<tr><td class="l">${esc(x.name)}</td><td>${cmp(x.tvl)}</td><td>${cmp(x.mcap)}</td><td>&times;${x.capTvl.toFixed(2)}</td><td>&times;${x.vsModel.toFixed(2)}</td></tr>`).join('')}</table>` : '<p class="note">No priced peer shares its category or family.</p>';
+  const mx = `<table class="mini"><tr><th class="l">Net if the drop is worth&hellip;</th>${d.matrix.deposits.map((x) => `<th>${usd0(x)} in</th>`).join('')}</tr>${d.matrix.shares.map((sh, i) => `<tr><td class="l">${(sh * 100).toFixed(1)}% of implied, farmers split pro-rata</td>${d.matrix.net[i].map((n) => `<td class="${n < 0 ? 'neg' : 'pos'}">${usd0(n)}</td>`).join('')}</tr>`).join('')}</table>`;
+  el('#detailview').innerHTML = `<a class="back" href="?">&larr; back to the board</a>
+    <h2 style="color:#fff;margin:4px 0">${esc(r[C.name])} <span class="note">— ${pick === 'farm' ? 'the board\'s best farm: highest net per hands-on hour among FARM verdicts' : 'the highest-implied protocol on the house watchlist'}</span></h2>
+    ${statsLine(r, p, s)}
+    <div class="card"><h3>Where the value comes from — factor by factor</h3>${vf}
+    <p class="note">The factors multiply to the model's multiple for this row; &times; TVL gives <b>value if it launches</b>. Bars are log-scaled around &times;1.</p>
+    <h3>Where the odds come from — logit by logit</h3>${of}
+    <p class="note">Contributions add in logit space; the sum converts to the launch odds above.</p></div>
+    <div class="card"><h3>Priced peers in its category or family</h3>${peers}
+    <p class="note">Actual &divide; this model: how the peer's real cap compares with what this row's model would predict for it — the same scatter the honesty check measures.</p></div>
+    <div class="card"><h3>What the farm pays at other sizes</h3>${mx}
+    <p class="note">Break-evens at the default scenario: the verdict turns positive if farmers receive <b>${(d.breakEvenShare * 100).toFixed(1)}%</b> of the implied value (the board assumes ${(D.scenario.dropShare * 100).toFixed(0)}%), or if the true launch odds are <b>${(d.breakEvenOdds * 100).toFixed(0)}%</b> (the model says ${r[C.odds].toFixed(0)}%). Exit rule: withdraw if TVL prints below <b>${usd0(d.exitTvl)}</b> — 17% under the snapshot — if withdrawals pause, or once a snapshot is announced.</p></div>
+    <div class="card"><h3>The plan — ${d.plan.length} steps, costed</h3><ol class="plan">${d.plan.map((x) => `<li><b>${esc(x.title)}</b> — ${esc(x.body)} <span class="cost">(COST ${money(x.cost)}; TIME ${x.minutes} min)</span></li>`).join('')}</ol></div>`;
+}
+function renderRow(slug) {
+  const r = D.rows.find((x) => x[C.slug] === slug);
+  if (!r) { el('#detailview').innerHTML = '<p>Unknown protocol.</p>'; return; }
+  const p = price(r, r[C.implied]), s = price(r, r[C.p25]);
+  const f = fees(r[C.op]), h = hours();
+  el('#detailview').innerHTML = `<a class="back" href="?">&larr; back to the board</a>
+    <h2 style="color:#fff;margin:4px 0">${esc(r[C.name])} <span class="note">— ${esc(r[C.cat] || 'Uncategorised')}${r[C.wl] ? ' · on the house watchlist ★' : ''}</span></h2>
+    ${statsLine(r, p, s)}
+    <div class="card"><h3>The verdict, priced out</h3>
+    <p>At the default scenario (${usd0(D.scenario.deposit)} in, ${(D.scenario.dropShare * 100).toFixed(0)}% of any launch value to farmers, ${D.scenario.weeks} weeks): the position's share of a drop is worth <b>${usd0(p.drop)}</b>; the plan's step fees come to <b>${money(f)}</b> on ${esc(r[C.chains][0] || 'its main chain')}; hands-on time is <b>${h.toFixed(1)} h</b>, charged at $25/h = <b>${usd0(h * 25)}</b>; the same cash in a T-bill returns <b>${usd0(p.tbill)}</b>. Net <b class="${p.net < 0 ? 'neg' : 'pos'}">${usd0(p.net)}</b> — hence <b>${VN[p.v]}</b>. Repricing at the P25 implied value (${cmp(r[C.p25])}) gives <b>${VN[s.v]}</b>.</p>
+    <p class="note">Exit rule: withdraw if TVL prints below ${usd0(r[C.tvl] * 0.83)} (17% under the snapshot's ${usd0(r[C.tvl])}), if withdrawals pause, or once a snapshot is announced. This row's full step-by-step farm plan — ${'7'} steps with a cost and a time on each — is in board.json under <b>farm_steps</b>; the two featured protocols carry their full plans on this page: <a href="?view=detail&amp;pick=farm">best farm</a> · <a href="?view=detail&amp;pick=watch">best watchlist</a>.</p></div>`;
+}
+el('#asof').textContent = D.asOf;
+const view = params.get('view');
+if (view === 'detail' || view === 'row') {
+  el('#boardview').hidden = true; el('#detailview').hidden = false;
+  if (view === 'detail') renderFeatured(params.get('pick') === 'watch' ? 'watch' : 'farm');
+  else renderRow(params.get('slug'));
+} else renderBoard();

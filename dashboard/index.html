@@ -1,108 +1,83 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Launch Radar — pre-token protocols priced off a size curve fitted on the tokens that already trade</title>
+<title>RADAR-7 — Token Launch Radar</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<header class="masthead">
-  <p class="eyebrow" id="eyebrow">Token launch radar</p>
-  <h1 id="headline">Pre-token protocols, ranked by implied value</h1>
-  <p class="lede" id="lede"></p>
-  <div class="facts" id="facts"></div>
+<header class="top">
+  <div class="brand">
+    <h1>RADAR&#8202;-&#8202;7</h1>
+    <p class="sub">Token launch radar &middot; snapshot <b id="asof"></b> &middot; DefiLlama protocols &middot; every number on this page is computed from the snapshot itself at build time &mdash; nothing is hand-entered.</p>
+  </div>
+  <nav>
+    <a href="?">Board</a>
+    <a href="?tab=farm">Farm shortlist</a>
+    <a href="?view=detail&amp;pick=farm">Detail: best farm</a>
+    <a href="?view=detail&amp;pick=watch">Detail: best watchlist</a>
+  </nav>
 </header>
 
-<main>
-  <section class="evidence" id="evidence" aria-label="Out-of-sample evidence">
-    <div class="ev-grid" id="ev-grid"></div>
-    <p class="note" id="ev-note"></p>
+<main id="boardview">
+  <section class="kpis" id="kpis"></section>
+
+  <section class="card">
+    <h2>Where all <span id="acctotal"></span> protocols went</h2>
+    <div class="bar" id="acctbar"></div>
+    <div class="legend" id="acctlegend"></div>
+    <p class="note" id="acctnote"></p>
   </section>
 
-  <section id="start-here" aria-label="Start here">
-    <h2>Start here — the five to farm first</h2>
-    <p class="note">Ranked by launch score: implied value weighted by launch readiness. Each card shows the
-    value band, the token odds from its category's own record, and the readiness gauge with its six parts.</p>
-    <div class="picks" id="picks"></div>
+  <section class="strip" id="integrity"></section>
+
+  <section class="models">
+    <div class="card" id="valuemodel"></div>
+    <div class="card" id="oddsmodel"></div>
+  </section>
+  <section class="card honesty" id="honesty"></section>
+
+  <section class="card controls">
+    <div class="scen">
+      <b>Your scenario</b>
+      <label>Deposit $<input id="sc-dep" type="number" min="100" step="100"></label>
+      <label>Drop share <input id="sc-share" type="number" min="0.5" max="40" step="0.5">%</label>
+      <label>Weeks <input id="sc-weeks" type="number" min="1" max="52" step="1"></label>
+      <button id="sc-apply">Reprice verdicts</button>
+      <span class="note">Verdicts reprice live: drop = implied &times; share &times; deposit/(TVL+deposit), minus step fees and hands-on hours at $25/h, against a 4% T-bill. The board's verdict column uses the default scenario.</span>
+    </div>
+    <div class="filters">
+      <span id="chips"></span>
+      <input id="q" type="search" placeholder="Search name or slug">
+      <select id="cat"></select>
+      <button id="exp-csv">Export CSV</button>
+      <button id="exp-json">Export JSON</button>
+    </div>
   </section>
 
-  <section class="band" id="model-band" aria-label="The value model">
-    <div class="band-head">
-      <h2>The model: a size curve, tested out of sample</h2>
-      <p class="band-sub" id="model-sub"></p>
-    </div>
-    <div class="band-grid">
-      <div class="panel">
-        <h3>Fitted curve</h3>
-        <p class="formula" id="formula"></p>
-        <p class="note" id="fit-note"></p>
-        <p class="note" id="curve-range"></p>
-      </div>
-      <div class="panel">
-        <h3>Backtest — leave-one-out on the priced tokens</h3>
-        <table class="mini" id="backtest-table"></table>
-        <p class="note" id="backtest-note"></p>
-      </div>
-    </div>
+  <section class="card tablewrap">
+    <table id="board">
+      <thead><tr>
+        <th data-k="rank">#</th><th data-k="name">Protocol</th><th data-k="tvl">TVL</th>
+        <th data-k="chg">7d %</th><th data-k="age">Age</th><th data-k="odds">Odds</th>
+        <th data-k="valueif">Value if</th><th data-k="implied">Implied value (P10&ndash;P90)</th>
+        <th data-k="rankrange">Rank range</th><th data-k="verdict">Verdict</th>
+        <th data-k="net">Net</th><th data-k="nph">Net/h</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="note" id="rowcount"></p>
   </section>
 
-  <section id="board-section" aria-label="The board">
-    <div class="board-head">
-      <h2 id="board-title">The board</h2>
-      <div class="tabs" role="tablist">
-        <button id="tab-board" class="tab active" type="button">Pre-token board</button>
-        <button id="tab-live" class="tab" type="button">Live tokens — the comp set</button>
-      </div>
-    </div>
-    <div class="controls" id="controls">
-      <label>Search <input id="q" type="search" placeholder="name or slug"></label>
-      <label>Category <select id="cat"></select></label>
-      <label>Sort <select id="sort">
-        <option value="score" selected>Launch score</option>
-        <option value="rank">Implied value</option>
-        <option value="readiness">Readiness</option>
-        <option value="tvl">TVL</option>
-        <option value="growth">7d growth</option>
-        <option value="tenure">Token-free tenure</option>
-        <option value="band">Band low end</option>
-      </select></label>
-      <label class="check"><input id="watch-only" type="checkbox"> Watchlist only</label>
-      <span class="count" id="row-count"></span>
-    </div>
-    <div class="table-wrap">
-      <table class="board" id="board-table"></table>
-      <table class="board hidden" id="live-table"></table>
-    </div>
-    <p class="note" id="live-note"></p>
-  </section>
-
-  <section id="audit" aria-label="Audit tables">
-    <h2>Audit — category multiples against the curve</h2>
-    <p class="note">The old way priced a protocol at its TVL times its category's median multiple. The table below is that
-    model's raw material, kept so the comparison stays honest: the backtest above is run against exactly these medians.
-    The curve's category offset is each category's mean residual from the curve, shrunk by n/(n+15) — a category with
-    three priced tokens moves the fit a fifth as much as its raw residual says.</p>
-    <div class="table-wrap"><table class="board slim" id="category-table"></table></div>
-    <h3 style="margin-top:20px">The curve by size</h3>
-    <p class="note">What the fitted curve pays per dollar of TVL, by the protocol's size — the multiple compression
-    the flat median model cannot express.</p>
-    <table class="mini" id="curve-table" style="max-width:560px"></table>
-    <p class="note" id="method-note"></p>
-  </section>
+  <footer class="note">
+    <p><b>How to read this board.</b> The house rule ranks protocols with no token recorded once TVL passes the floor; this board lifts the floor, so early protocols are ranked too and the ranked set reconciles exactly with the snapshot. <i>Value if</i> is what the value model says a launch would be worth; <i>implied</i> multiplies that by the odds model's launch probability. Both models are fitted on the snapshot's own protocols and kept only the terms that lowered the miss in all three held-out tests above. The stress verdict reprices each row at its P25 implied value. A FARM verdict is arithmetic at the stated scenario, not a promise that a token will launch.</p>
+  </footer>
 </main>
 
-<footer>
-  <p>Implied value is this radar's own claim about what a launch would be worth if the protocol's record stayed as it
-  is; it is not a prediction that a token will be issued. A protocol here <em>records no token</em> in the snapshot —
-  that is DefiLlama's record, not proof that none exists. Farm plans are written for a reader deciding where to be
-  active before a launch; their costs are the plan's own gas, fees and time, and their verdicts are netted at the low
-  end of each row's value band.</p>
-</footer>
+<main id="detailview" hidden></main>
 
-<dialog id="detail"></dialog>
-
-<script src="../data.js"></script>
+<script src="data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

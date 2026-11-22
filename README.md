@@ -1,121 +1,65 @@
-# token-radar-01
+[![make.fun bounty](https://img.shields.io/badge/make.fun-token--radar--01-blue)](https://make.fun/bounty/token-radar-01)
 
-[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
-[![rank](https://make.fun/badge/token-radar-01/wizzy-bounty/token-radar-01/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
-[![reward](https://make.fun/badge/token-radar-01/wizzy-bounty/token-radar-01/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+# RADAR-7 — Token Launch Radar
 
-The best token launch radar: a program that reads a sealed snapshot of every
-protocol DefiLlama tracks and writes a web dashboard ranking the protocols that
-record no token yet by what their launch would be worth — each with the steps to
-farm it, the risks to watch, and the live-token benchmarks the price rests on.
-Every implied value carries a band from the model's own leave-one-out
-spread, the value model is tested out of sample, and every farm plan is
-netted at the band's low end.
+An entry for the make.fun bounty [token-radar-01](https://make.fun/bounty/token-radar-01).
 
-Built for the make.fun `token-radar-01` competition ($1,325, 1st place $1,000).
-No entry fee, no network at runtime.
-
-## radar-6 (current)
-
-The radar-5 size curve, plus three things computed from the same sealed
-snapshot: **token odds** — the share of a protocol's category peers that
-already record a token, smoothed toward the global rate, with a Brier score
-(0.210) against the base rate (0.248); **band honesty** — 50.8% of real
-market caps land inside the printed P25–P75 band (stated 50%), 80.5% inside
-P10–P90 (stated 80%), both measured leave-one-out; and **launch readiness** —
-a 0–100 gauge from scale, momentum, token-free tenure, chain breadth, the
-watchlist and priced-peer evidence. The board ranks by **launch score** =
-implied value × (0.5 + readiness/100), with the pure value rank kept beside
-it. The top five return as rich feature cards (value band graphic, token
-odds, readiness gauge) in the first viewport, and the detail view shows the
-readiness breakdown. Steakhouse Financial leads the board on score
-($121.8M, readiness 70/100); Sentora Curator still leads on implied value
-alone ($101.6M).
+RADAR-7 ranks every protocol the house watchlist rule would rank — with the
+TVL floor lifted, so early protocols are ranked too — and prices each one
+with two models fitted on the snapshot's own figures at run time. Nothing on
+the board is hand-entered.
 
 ## What it does
 
-`main.ts` (Node 22, standard library only) reads `/input/snapshot.json`
-(758 protocols at or above $5M TVL, 40 on the watchlist, snapshot 2026-11-14)
-and writes to `/output`:
-
-- `board.json` — **198 rows**: every farmable pre-token protocol in the snapshot
-  (all 40 watchlist protocols covered, plus all 158 other pre-token protocols),
-  ranked by implied value, each with an eight-step farm plan.
-- `data.js` — the dashboard's dataset, beside the page.
-- `dashboard/` — a static page (no network): a "start here" shortlist of the five
-  to farm first, the value model stated on the first screen, a searchable,
-  sortable board with a signal in every row, a band from the model's own
-  leave-one-out spread and a Net column (the band's low end minus the farm
-  plan's cost) on every row, category and chain filters, a watchlist-only
-  toggle, a detail view per protocol with the full model breakdown, its
-  watch-outs, its farm plan with the earning mechanism and the netted verdict,
-  a benchmark tab listing **all 128 priced live tokens with a usable price,
-  each with its market cap per TVL dollar and the multiple the curve assigns
-  its size**, and a model panel with the size-curve formula, the
-  category-offset table and the out-of-sample backtest. Every protocol in the
-  snapshot is accounted for on the page: 198 ranked, 144 set aside as wrapped,
-  staked, bridged or exchange products of tokens that already trade, and 416
-  that already record a token (128 of them with a usable price, 16 carrying a
-  price of zero, and 272 with no price in the snapshot) — a census of
-  198 + 144 + 416 = 758.
-- `screenshots/` — the board, a protocol's detail view, and a filtered view.
-- `dossier.json` — built with the kit's `vendor/makefun-board.ts`.
-
-## The model (radar-5)
-
-Implied value comes from a size curve — market cap grows slower than TVL, so
-the implied multiple falls as a protocol grows — not from a flat
-category-median multiple:
-
-```
-log10(value) = 3.02 + 0.52 x log10(TVL) + a category offset shrunk by n/(n+15)
-```
-
-- The curve is fitted at runtime from the snapshot; no multiple is hardcoded
-  and no protocol name is ever special-cased. The category offset is each
-  category's mean residual from the curve, shrunk toward zero by n/(n+15),
-  where n is the category's number of priced comps, so thin categories barely
-  move the fit. Growth and tenure are shown as signals on each row, never
-  priced in.
-- The fit rests on the 128 priced tokens with a usable price. Of the 416
-  protocols that record a token, 16 records carry a price of zero and are
-  excluded as evidence, and 272 record a token with no price.
-
-**Tested out of sample.** A leave-one-out backtest on the 128 comps — each
-token priced by a model fitted without it, then compared with the market cap
-it actually carries — gives the curve model a median error of x3.70 against
-x4.89 for the old category-median model. A time split (fit the older half,
-price the newer) agrees: x3.01 against x4.82. Each row's band is the model's
-own LOO spread — the middle half of its leave-one-out errors, applied to that
-row's implied value.
-
-**Farm plans netted at the band's low end.** Each plan states its cost and
-its net at the band's low end (band low minus plan cost), and carries a
-Farm / Thin / Skip verdict on that netted figure. Each plan also names the
-mechanism it actually earns by — for example trading fees, borrower interest,
-vault yield, or funding and basis — from the protocol's category and the
-snapshot's numbers.
-
-The board covers 198 pre-token protocols, with all 40 watchlist protocols
-covered. Census: 198 ranked + 144 set aside + 416 token-recording = 758.
-
-Top of the board on this snapshot: Sentora Curator ($101.6M), Steakhouse
-Financial ($101.5M), Gauntlet ($75.9M). "No token" means the snapshot records no
-token for the protocol — it does not prove the protocol has none. Implied value
-is this radar's own estimate, not a price and not a promise of a launch.
+- **Coverage that reconciles.** The board ranks 201 protocols (the 40-name
+  watchlist plus every other protocol passing the house rule), and a stacked
+  ledger accounts for all 758 protocols in the snapshot: ranked, already
+  carrying a recorded cap, token recorded with no cap yet, and out by the
+  house rule itself, with the out-reasons itemised.
+- **A value model with three held-out tests.** ln(cap ÷ TVL) is regressed on
+  the protocols whose tokens carry a positive cap. A candidate term is kept
+  only if it lowers the typical miss in all three tests: leave-one-out,
+  walk-forward (earlier listings price later ones), and leave-one-family-out.
+  Terms that fail — including a control term that cannot legitimately help —
+  are printed as tested, not kept.
+- **An odds model the same way.** A logistic fit over all 758 protocols for
+  whether a token gets recorded, gated by the same three tests.
+- **Honest ranges.** 200 bootstrap refits (coefficients plus a drawn
+  residual, because peers scatter around the model) give every row a
+  P10–P90 implied band and a 5–95% rank range. The page checks the bands
+  against the priced peers: the share of actual caps inside the printed
+  P25–P75 and P10–P90 bands is reported next to the model.
+- **Costed verdicts with a stress column.** At a default scenario ($10,000
+  deposit, 7% of any launch value to farmers, 12 weeks), each row's drop is
+  priced against step fees from its own chains and hands-on hours at $25/h,
+  versus a 4% T-bill: FARM, MARGINAL or SKIP. The verdict is recomputed at
+  the row's P25 implied value as a stress test, and every row carries a
+  concrete farm plan (in `board.json`) with a cost and a time on each step.
+- **Two deep detail pages** — the best farm and the best watchlist protocol —
+  with factor-by-factor value and odds breakdowns, priced peers, a
+  net-by-size matrix, break-evens and a 10-step costed plan. Every other row
+  has its own detail view with the verdict priced out.
 
 ## Run it
 
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <path-to-snapshot.json>
+```
+node main.ts --input /path/to/snapshot.json   # writes /output
+MAKEFUN_OUTPUT_DIR=out node main.ts --input snapshot.json
 ```
 
-The program is deterministic: two runs write byte-identical output.
+Node 22, standard library only. Output: `board.json` (the ranked board),
+`dashboard/` (the page, with `data.js` generated beside it), `screenshots/`,
+and `dossier.json`.
 
-## License
+## Layout
 
-MIT — see `LICENSE`.
-
----
-
-<sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
+- `main.ts` — entry point: fits the models, writes the board, the page data
+  and the dossier (exactly as `buildDossier` returns it).
+- `lib/model.ts` — the two models, the three held-out tests, term
+  selection, the bootstrap.
+- `lib/farm.ts` — chain fee classes, verdicts, farm plans, detail builder.
+- `lib/stats.ts` — the small statistics toolkit (seeded RNG, ridge fits,
+  logistic IRLS).
+- `dashboard/` — the page: sortable, filterable, searchable, with a live
+  scenario editor and CSV/JSON export. No network requests; the whole
+  dashboard source stays under the 64 KiB budget so it is read whole.
