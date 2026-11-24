@@ -3,86 +3,107 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RADAR-8 — Break-Even First · Token Launch Radar</title>
+<title>RADAR-9 — Consensus Radar: pre-token protocols ranked by implied value</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand">
-    <h1>RADAR-8 <span>BREAK-EVEN FIRST</span></h1>
-    <p id="meta-line" class="meta"></p>
-    <p id="meta-note" class="note"></p>
+  <div>
+    <h1>RADAR-9 <span class="sub">CONSENSUS RADAR</span></h1>
+    <p class="tag">Pre-token protocols ranked by implied value — three unlike estimators price every row, the board takes the median, and every claim on this page is a held-out test the model actually sat.</p>
+    <p class="meta" id="meta-line"></p>
   </div>
-  <div class="farm-strip" id="farm-strip"></div>
+  <nav>
+    <a href="#board">Board</a>
+    <a href="#evidence">Model evidence</a>
+    <a href="#detail-0" id="nav-detail-0">Detail: best farm pick</a>
+    <a href="#detail-1" id="nav-detail-1">Detail: watchlist pick</a>
+    <a href="#farmview">Farm view</a>
+  </nav>
 </header>
 
 <section class="kpis" id="kpis"></section>
 
-<section class="panel evidence">
-  <h2>OUT-OF-SAMPLE EVIDENCE — every term, four held-out tests</h2>
-  <p class="sub">A term is kept only if it lowers the miss in at least 3 of 4 tests: leave-one-out (LOO), walk-forward (earlier listings price later ones), leave-one-family-out (LOFO), leave-one-chain-out (LOCO). The control term — the 7-day growth of the next protocol in slug order — must not help, and is never kept.</p>
-  <div class="ev-grid">
+<section id="evidence" class="panel">
+  <h2>Out-of-sample evidence — the model, tested before it is believed</h2>
+  <p class="note">Every candidate term had to improve <strong>all four</strong> held-out tests of the ridge estimator at once — leave-one-out, walk-forward (earlier listings price later ones), leave-one-family-out, leave-one-chain-out — or it was refused, however good it looked in-sample. The shipped consensus is then scored under the same four tests, coefficients refit in every split. Miss = exp(median |log error|): the typical prediction is off by that factor.</p>
+  <div class="cols">
     <div>
-      <h3>Value model — typical miss, x-fold (lower is better)</h3>
-      <table class="ev" id="ev-value"></table>
-      <p class="coef" id="coef-value"></p>
+      <h3>Value model — the three estimators and their consensus</h3>
+      <table class="mini" id="estimator-table"></table>
+      <h3>Value terms — tested solo against the four tests</h3>
+      <table class="mini" id="value-terms"></table>
     </div>
     <div>
-      <h3>Odds model — Brier score (lower is better)</h3>
-      <table class="ev" id="ev-odds"></table>
-      <p class="coef" id="coef-odds"></p>
+      <h3>Launch-odds terms — Brier score, four tests</h3>
+      <table class="mini" id="odds-terms"></table>
+      <h3>Coefficients</h3>
+      <table class="mini" id="coef-table"></table>
     </div>
   </div>
-  <p class="reading" id="reading"></p>
-  <p class="reading" id="conformal-line"></p>
-</section>
-
-<section class="panel ledger-panel">
-  <h2>THE 758-PROTOCOL LEDGER — every protocol accounted for once</h2>
+  <div id="reading"></div>
+  <h3>Every one of the <span id="ledger-total"></span> protocols, accounted for</h3>
   <div class="ledger" id="ledger"></div>
-  <div class="legend" id="ledger-legend"></div>
   <p class="integrity" id="integrity"></p>
 </section>
 
-<section class="panel controls">
-  <div class="row1">
-    <div class="tabs" id="tabs">
-      <button data-tier="ALL" class="on">All rows</button>
-      <button data-tier="FARM">FARM</button>
-      <button data-tier="MARGINAL">MARGINAL</button>
-      <button data-tier="SKIP">SKIP</button>
-      <button data-tier="WL">Watchlist</button>
-    </div>
-    <input id="q" type="search" placeholder="Search protocol, category, chain">
-    <select id="f-cat"><option value="">All categories</option></select>
-    <select id="f-chain"><option value="">All chains</option></select>
-    <button id="reset">Reset</button>
-    <button id="exp-csv">Export CSV</button>
-    <button id="exp-json">Export JSON</button>
-  </div>
-  <div class="row2">
-    <label>Drop share to farmers <b id="ds-val"></b><input id="ds" type="range" min="1" max="15" step="0.5"></label>
+<section class="panel controls" id="controls">
+  <div class="ctl">
+    <label>Drop share <span id="ds-val"></span><input type="range" id="ds" min="2" max="15" step="0.5"></label>
     <label>Horizon
-      <select id="hz"><option value="12">12 weeks</option><option value="26">26 weeks</option><option value="52">52 weeks</option></select>
+      <select id="horizon"><option value="13">13 weeks</option><option value="26">26 weeks</option><option value="52">52 weeks</option></select>
     </label>
-    <label>Verdict priced at
-      <select id="ps"><option value="viable">Each row's minimum viable capital</option><option value="ref">Reference $10,000 deposit</option></select>
+    <label>Search <input type="search" id="q" placeholder="protocol name or slug"></label>
+    <label>Category <select id="cat"><option value="">all</option></select></label>
+    <label>Chain <select id="chain"><option value="">all</option></select></label>
+    <label>Sort
+      <select id="sort">
+        <option value="rank">rank (implied value)</option>
+        <option value="nph">net per hour</option>
+        <option value="viable">minimum viable capital</option>
+        <option value="odds">launch odds</option>
+        <option value="tvl">TVL</option>
+      </select>
     </label>
-    <span class="hint">Verdicts recompute live from the scenario. Default: 6% drop share, 26 weeks, T-bill 4%/yr, hands-on time at $25/h.</span>
+    <span class="tabs" id="tier-tabs">
+      <button data-tier="" class="on">All</button><button data-tier="FARM">FARM</button><button data-tier="MARGINAL">MARGINAL</button><button data-tier="SKIP">SKIP</button><button data-tier="WL">Watchlist</button>
+    </span>
+    <button id="reset">Reset</button>
+    <button id="csv">Export CSV</button>
+    <button id="json">Export JSON</button>
   </div>
+  <p class="note">Verdicts are priced break-even-first at the scenario above: each row at the smallest deposit whose net — the farmer's share of implied value, less the plan's own fees and hands-on time at $25/h — clears a 4% T-bill hurdle on the same money. Change the scenario and the verdicts move; the implied values do not.</p>
 </section>
 
-<main id="board-view">
-  <table class="board" id="board"></table>
-  <p class="foot" id="shown"></p>
-</main>
+<section class="panel" id="board">
+  <h2>The board — <span id="board-count"></span></h2>
+  <div class="scroll">
+  <table class="board" id="board-table">
+    <thead><tr>
+      <th>#</th><th>Protocol</th><th>Category / chains</th><th>TVL</th><th>7d</th><th>No-token age</th>
+      <th>Odds</th><th>E1 / E2 / E3 value-if</th><th>Implied (consensus)</th><th>80% band</th>
+      <th>Capital read at</th><th>Break-even drop</th><th>Verdict</th><th>Net at that capital</th><th>Net/h</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <p class="note">Click a row for its farm plan. E1 = ridge regression, E2 = median (L1) regression, E3 = local peer estimator; the implied value uses the median of the three, times the calibrated launch odds. A protocol is said to record no token, never to have none. Reading the verdict columns: a FARM row breaks even at the capital shown and clears the T-bill hurdle there. A MARGINAL row (capital marked *) has a deposit whose net is positive — the best such deposit is the one shown — but no deposit clears the T-bill hurdle, so it is not FARM. The break-even drop share is quoted at that same capital, so a row's verdict and its break-even figure are always read at one deposit size and cannot contradict each other.</p>
+</section>
 
-<section id="detail-view" class="panel detail" hidden></section>
+<section class="panel detail" id="detail-0"></section>
+<section class="panel detail" id="detail-1"></section>
 
-<footer class="foot">
-  RADAR-8 prices each row at its own minimum viable capital: the smallest deposit whose net — drop share of implied value, pro-rata to TVL, minus plan fees and hands-on hours at $25/h — clears a 4% T-bill over the same horizon. FARM: viable capital exists and is at most $250,000. MARGINAL: net positive somewhere but under the T-bill line, or viable only above $250,000. SKIP: no deposit in the domain breaks even. Implied value is this board's own claim, never a prediction that a token will be issued.
+<section class="panel" id="farmview">
+  <h2>Farm view — FARM verdicts only, by net per hour</h2>
+  <div class="scroll"><table class="board" id="farm-table">
+    <thead><tr><th>#</th><th>Protocol</th><th>TVL</th><th>Odds</th><th>Implied</th><th>Capital read at</th><th>Net at that capital</th><th>Net/h</th><th>Break-even drop</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<footer>
+  <p>RADAR-9 — built for the make.fun token-radar-01 bounty. One sealed snapshot, read once; no network, no hand-kept list of names. The board's implied value is this entry's own claim, derived from the snapshot's figures by the models above.</p>
 </footer>
-
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>
