@@ -1,193 +1,173 @@
-// stats.ts — small deterministic numerical helpers for the radar-7 models.
-// Everything here is seeded and reproducible: the same snapshot always
-// produces the same numbers, run after run.
+// RADAR-8 statistics toolkit — written for this entry, Node standard library only.
+// Everything here is deterministic: the only randomness is a seeded generator, so two runs of
+// main.ts over the same snapshot write byte-identical output.
 
-/** mulberry32: tiny seeded PRNG, good enough for bootstrap resampling. */
+/** mulberry32: a small seeded PRNG, stable across platforms and Node versions. */
 export function rng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
+/** FNV-1a hash of a string, as an unsigned 32-bit integer. Used for deterministic splits. */
+export function fnv(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 export function median(xs: number[]): number {
-  if (xs.length === 0) return 0;
+  if (xs.length === 0) return NaN;
   const s = [...xs].sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 }
 
-export function quantile(xs: number[], q: number): number {
-  if (xs.length === 0) return 0;
+export function mean(xs: number[]): number {
+  return xs.length === 0 ? NaN : xs.reduce((a, b) => a + b, 0) / xs.length;
+}
+
+/** The p-quantile of xs with the conformal finite-sample correction: rank ceil((n+1)*p), clamped. */
+export function conformalQuantile(xs: number[], p: number): number {
+  if (xs.length === 0) return NaN;
   const s = [...xs].sort((a, b) => a - b);
-  const pos = (s.length - 1) * q;
-  const lo = Math.floor(pos), hi = Math.ceil(pos);
-  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (pos - lo);
+  const rank = Math.min(s.length, Math.max(1, Math.ceil((s.length + 1) * p)));
+  return s[rank - 1]!;
 }
 
-export function clamp(x: number, lo: number, hi: number): number {
-  return x < lo ? lo : x > hi ? hi : x;
+/** Plain p-quantile (nearest-rank), for tercile boundaries. */
+export function quantile(xs: number[], p: number): number {
+  if (xs.length === 0) return NaN;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.max(0, Math.floor(p * s.length)))]!;
 }
 
-/** Solve A x = b for a small dense A by Gauss-Jordan with partial pivoting. */
-export function solve(A: number[][], b: number[]): number[] {
-  const n = A.length;
-  const M = A.map((row, i) => [...row, b[i]]);
+/** Solve A x = b for a small dense A by Gaussian elimination with partial pivoting. */
+export function solveLinear(A: number[][], b: number[]): number[] {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]!]);
   for (let col = 0; col < n; col++) {
     let piv = col;
-    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
-    if (piv !== col) [M[col], M[piv]] = [M[piv], M[col]];
-    const d = M[col][col] || 1e-12;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r]![col]!) > Math.abs(M[piv]![col]!)) piv = r;
+    const tmp = M[col]!; M[col] = M[piv]!; M[piv] = tmp;
+    const d = M[col]![col]!;
+    if (Math.abs(d) < 1e-12) continue;
     for (let r = 0; r < n; r++) {
       if (r === col) continue;
-      const f = M[r][col] / d;
+      const f = M[r]![col]! / d;
       if (f === 0) continue;
-      for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+      for (let c = col; c <= n; c++) M[r]![c]! -= f * M[col]![c]!;
     }
   }
-  return M.map((row, i) => row[n] / (M[i][i] || 1e-12));
-}
-
-/** Inverse of a small dense matrix via repeated solves. */
-export function inverse(A: number[][]): number[][] {
-  const n = A.length;
-  const cols: number[][] = [];
-  for (let j = 0; j < n; j++) {
-    const e = new Array(n).fill(0); e[j] = 1;
-    cols.push(solve(A, e));
-  }
-  return A.map((_, i) => cols.map((c) => c[i]));
-}
-
-export interface LinFit {
-  beta: number[];
-  /** (X'X + ridge)^-1, for hat diagonals and standard errors. */
-  inv: number[][];
-  fitted: number[];
-  resid: number[];
+  return M.map((row, i) => (Math.abs(row[i]!) < 1e-12 ? 0 : row[n]! / row[i]!));
 }
 
 /**
- * Ridge-penalised least squares. `penalty[j]` is the ridge weight on
- * coefficient j (0 = unpenalised). Returns the fit plus the inverse of the
- * penalised Gram matrix, which gives exact leave-one-out residuals for any
- * linear smoother: e_loo,i = e_i / (1 - h_ii).
+ * Ridge-stabilised least squares: minimises |y - Xb|^2 + ridge * sum_{j>0} b_j^2 (the intercept is
+ * never penalised). X rows already carry their leading 1 when an intercept is wanted.
  */
-export function fitLinear(X: number[][], y: number[], penalty: number[]): LinFit {
-  const n = X.length, p = X[0].length;
-  const G: number[][] = Array.from({ length: p }, () => new Array(p).fill(0));
-  const v = new Array(p).fill(0);
-  for (let i = 0; i < n; i++) {
-    const xi = X[i];
-    for (let a = 0; a < p; a++) {
-      v[a] += xi[a] * y[i];
-      for (let b = a; b < p; b++) G[a][b] += xi[a] * xi[b];
+export function fitOLS(X: number[][], y: number[], ridge = 1e-8): number[] {
+  const p = X[0]!.length;
+  const A: number[][] = Array.from({ length: p }, () => new Array<number>(p).fill(0));
+  const b = new Array<number>(p).fill(0);
+  for (let i = 0; i < X.length; i++) {
+    const xi = X[i]!;
+    for (let j = 0; j < p; j++) {
+      b[j]! += xi[j]! * y[i]!;
+      for (let k = 0; k < p; k++) A[j]![k]! += xi[j]! * xi[k]!;
     }
   }
-  for (let a = 0; a < p; a++) {
-    for (let b = 0; b < a; b++) G[a][b] = G[b][a];
-    G[a][a] += penalty[a];
-  }
-  const inv = inverse(G);
-  const beta = inv.map((row) => row.reduce((s, g, j) => s + g * v[j], 0));
-  const fitted = X.map((xi) => xi.reduce((s, x, j) => s + x * beta[j], 0));
-  const resid = y.map((yi, i) => yi - fitted[i]);
-  return { beta, inv, fitted, resid };
+  for (let j = 1; j < p; j++) A[j]![j]! += ridge;
+  return solveLinear(A, b);
 }
 
-/** Diagonal of the hat matrix H = X (X'X + ridge)^-1 X'. */
-export function hatDiag(X: number[][], inv: number[][]): number[] {
-  const p = X[0].length;
-  return X.map((xi) => {
-    let h = 0;
-    for (let a = 0; a < p; a++) {
-      let s = 0;
-      for (let b = 0; b < p; b++) s += inv[a][b] * xi[b];
-      h += xi[a] * s;
-    }
-    return Math.min(h, 0.999999);
-  });
+export function predictOLS(beta: number[], x: number[]): number {
+  let s = 0;
+  for (let j = 0; j < beta.length; j++) s += beta[j]! * x[j]!;
+  return s;
 }
 
-/** One Huber IRLS reweighting pass over a linear fit; returns new beta. */
-export function huberRefit(X: number[][], y: number[], penalty: number[], fit: LinFit): number[] {
-  const mad = median(fit.resid.map((r) => Math.abs(r - median(fit.resid)))) || 1e-9;
-  const k = 1.345 * 1.4826 * mad;
-  const w = fit.resid.map((r) => (Math.abs(r) <= k ? 1 : k / Math.abs(r)));
-  const n = X.length, p = X[0].length;
-  const G: number[][] = Array.from({ length: p }, () => new Array(p).fill(0));
-  const v = new Array(p).fill(0);
-  for (let i = 0; i < n; i++) {
-    const xi = X[i];
-    for (let a = 0; a < p; a++) {
-      v[a] += w[i] * xi[a] * y[i];
-      for (let b = a; b < p; b++) G[a][b] += w[i] * xi[a] * xi[b];
-    }
-  }
-  for (let a = 0; a < p; a++) {
-    for (let b = 0; b < a; b++) G[a][b] = G[b][a];
-    G[a][a] += penalty[a];
-  }
-  const inv = inverse(G);
-  return inv.map((row) => row.reduce((s, g, j) => s + g * v[j], 0));
-}
+const sigmoid = (z: number): number => (z >= 0 ? 1 / (1 + Math.exp(-z)) : Math.exp(z) / (1 + Math.exp(z)));
 
-export interface LogFit {
-  beta: number[];
-  prob: number[];
-  /** Inverse of the final IRLS Gram matrix (X'WX + ridge)^-1. */
-  inv: number[][];
-  /** Final IRLS weights p(1-p), for the one-step LOO approximation. */
-  w: number[];
-}
-
-/** Logistic regression by IRLS with a ridge on every coefficient but the intercept. */
-export function fitLogistic(X: number[][], y: number[], ridge = 1, start?: number[], maxIter = 40): LogFit {
-  const n = X.length, p = X[0].length;
-  let beta = start ? [...start] : new Array(p).fill(0);
-  let inv: number[][] = [], w: number[] = new Array(n).fill(0.25), prob: number[] = new Array(n).fill(0.5);
-  for (let iter = 0; iter < maxIter; iter++) {
-    prob = X.map((xi) => {
-      const z = xi.reduce((s, x, j) => s + x * beta[j], 0);
-      return 1 / (1 + Math.exp(-clamp(z, -30, 30)));
-    });
-    w = prob.map((pi) => Math.max(pi * (1 - pi), 1e-9));
-    const G: number[][] = Array.from({ length: p }, () => new Array(p).fill(0));
-    const v = new Array(p).fill(0);
-    for (let i = 0; i < n; i++) {
-      const xi = X[i], ri = y[i] - prob[i];
-      for (let a = 0; a < p; a++) {
-        v[a] += xi[a] * ri;
-        for (let b = a; b < p; b++) G[a][b] += w[i] * xi[a] * xi[b];
+/**
+ * Logistic regression by IRLS (Newton steps on the ridge-penalised likelihood). Features should be
+ * roughly standardised by the caller; the intercept is never penalised.
+ */
+export function fitLogistic(X: number[][], y: number[], ridge = 1e-3, iters = 60): number[] {
+  const p = X[0]!.length;
+  let beta = new Array<number>(p).fill(0);
+  // Start the intercept at the base-rate logit so IRLS begins near the solution.
+  const base = Math.min(0.999, Math.max(0.001, mean(y)));
+  beta[0] = Math.log(base / (1 - base));
+  for (let it = 0; it < iters; it++) {
+    const A: number[][] = Array.from({ length: p }, () => new Array<number>(p).fill(0));
+    const g = new Array<number>(p).fill(0);
+    for (let i = 0; i < X.length; i++) {
+      const xi = X[i]!;
+      let z = 0;
+      for (let j = 0; j < p; j++) z += beta[j]! * xi[j]!;
+      const mu = sigmoid(z);
+      const w = Math.max(1e-6, mu * (1 - mu));
+      for (let j = 0; j < p; j++) {
+        g[j]! += xi[j]! * (y[i]! - mu);
+        for (let k = 0; k < p; k++) A[j]![k]! += w * xi[j]! * xi[k]!;
       }
     }
-    for (let a = 0; a < p; a++) {
-      for (let b = 0; b < a; b++) G[a][b] = G[b][a];
-      if (a > 0) G[a][a] += ridge;
-    }
-    inv = inverse(G);
-    const step = inv.map((row) => row.reduce((s, g, j) => s + g * v[j], 0));
-    let move = 0;
-    beta = beta.map((bj, j) => { const nb = bj + step[j]; move = Math.max(move, Math.abs(step[j])); return nb; });
-    if (move < 1e-8) break;
+    for (let j = 1; j < p; j++) { A[j]![j]! += ridge; g[j]! -= ridge * beta[j]!; }
+    const step = solveLinear(A, g);
+    let maxStep = 0;
+    for (let j = 0; j < p; j++) { beta[j]! += step[j]!; maxStep = Math.max(maxStep, Math.abs(step[j]!)); }
+    if (maxStep < 1e-9) break;
   }
-  prob = X.map((xi) => {
-    const z = xi.reduce((s, x, j) => s + x * beta[j], 0);
-    return 1 / (1 + Math.exp(-clamp(z, -30, 30)));
-  });
-  w = prob.map((pi) => Math.max(pi * (1 - pi), 1e-9));
-  return { beta, prob, inv, w };
+  return beta;
 }
 
-export function brier(y: number[], prob: number[]): number {
-  return y.reduce((s, yi, i) => s + (yi - prob[i]) * (yi - prob[i]), 0) / y.length;
+export function predictLogistic(beta: number[], x: number[]): number {
+  let z = 0;
+  for (let j = 0; j < beta.length; j++) z += beta[j]! * x[j]!;
+  return sigmoid(z);
 }
 
-/** Typical multiplicative miss: exp(median |log error|), reported as a ×factor. */
-export function typicalMiss(actual: number[], pred: number[]): number {
-  const errs = actual.map((a, i) => Math.abs(Math.log(a / Math.max(pred[i], 1e-9))));
-  return Math.exp(median(errs));
+/** Brier score of probabilistic predictions against 0/1 outcomes. */
+export function brier(preds: number[], ys: number[]): number {
+  let s = 0;
+  for (let i = 0; i < ys.length; i++) s += (preds[i]! - ys[i]!) ** 2;
+  return ys.length === 0 ? NaN : s / ys.length;
+}
+
+/** Standard deviation of a sample (population form; used for bootstrap spreads). */
+export function stdev(xs: number[]): number {
+  if (xs.length === 0) return NaN;
+  const m = mean(xs);
+  return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / xs.length);
+}
+
+/** Bootstrap standard errors of a fit: resample rows with a seeded generator, refit, spread per coef. */
+export function bootstrapSE<T>(
+  n: number,
+  refits: number,
+  seed: number,
+  refit: (sampleIdx: number[]) => number[] | null,
+): { se: number[]; coefs: number[][] } {
+  const rand = rng(seed);
+  const coefs: number[][] = [];
+  for (let r = 0; r < refits; r++) {
+    const idx: number[] = [];
+    for (let i = 0; i < n; i++) idx.push(Math.floor(rand() * n));
+    const c = refit(idx);
+    if (c !== null) coefs.push(c);
+  }
+  if (coefs.length === 0) return { se: [], coefs };
+  const p = coefs[0]!.length;
+  const se: number[] = [];
+  for (let j = 0; j < p; j++) se.push(stdev(coefs.map((c) => c[j]!)));
+  return { se, coefs };
 }

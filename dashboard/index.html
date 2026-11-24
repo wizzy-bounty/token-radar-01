@@ -3,81 +3,87 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RADAR-7 — Token Launch Radar</title>
+<title>RADAR-8 — Break-Even First · Token Launch Radar</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="top">
   <div class="brand">
-    <h1>RADAR&#8202;-&#8202;7</h1>
-    <p class="sub">Token launch radar &middot; snapshot <b id="asof"></b> &middot; DefiLlama protocols &middot; every number on this page is computed from the snapshot itself at build time &mdash; nothing is hand-entered.</p>
+    <h1>RADAR-8 <span>BREAK-EVEN FIRST</span></h1>
+    <p id="meta-line" class="meta"></p>
+    <p id="meta-note" class="note"></p>
   </div>
-  <nav>
-    <a href="?">Board</a>
-    <a href="?tab=farm">Farm shortlist</a>
-    <a href="?view=detail&amp;pick=farm">Detail: best farm</a>
-    <a href="?view=detail&amp;pick=watch">Detail: best watchlist</a>
-  </nav>
+  <div class="farm-strip" id="farm-strip"></div>
 </header>
 
-<main id="boardview">
-  <section class="kpis" id="kpis"></section>
+<section class="kpis" id="kpis"></section>
 
-  <section class="card">
-    <h2>Where all <span id="acctotal"></span> protocols went</h2>
-    <div class="bar" id="acctbar"></div>
-    <div class="legend" id="acctlegend"></div>
-    <p class="note" id="acctnote"></p>
-  </section>
-
-  <section class="strip" id="integrity"></section>
-
-  <section class="card controls">
-    <div class="scen">
-      <b>Your scenario</b>
-      <label>Deposit $<input id="sc-dep" type="number" min="100" step="100"></label>
-      <label>Drop share <input id="sc-share" type="number" min="0.5" max="40" step="0.5">%</label>
-      <label>Weeks <input id="sc-weeks" type="number" min="1" max="52" step="1"></label>
-      <button id="sc-apply">Reprice verdicts</button>
-      <span class="note">Verdicts reprice live: drop = implied &times; share &times; deposit/(TVL+deposit), minus step fees and hands-on hours at $25/h, against a 4% T-bill. The board's verdict column uses the default scenario.</span>
+<section class="panel evidence">
+  <h2>OUT-OF-SAMPLE EVIDENCE — every term, four held-out tests</h2>
+  <p class="sub">A term is kept only if it lowers the miss in at least 3 of 4 tests: leave-one-out (LOO), walk-forward (earlier listings price later ones), leave-one-family-out (LOFO), leave-one-chain-out (LOCO). The control term — the 7-day growth of the next protocol in slug order — must not help, and is never kept.</p>
+  <div class="ev-grid">
+    <div>
+      <h3>Value model — typical miss, x-fold (lower is better)</h3>
+      <table class="ev" id="ev-value"></table>
+      <p class="coef" id="coef-value"></p>
     </div>
-    <div class="filters">
-      <span id="chips"></span>
-      <input id="q" type="search" placeholder="Search name or slug">
-      <select id="cat"></select>
-      <button id="exp-csv">Export CSV</button>
-      <button id="exp-json">Export JSON</button>
+    <div>
+      <h3>Odds model — Brier score (lower is better)</h3>
+      <table class="ev" id="ev-odds"></table>
+      <p class="coef" id="coef-odds"></p>
     </div>
-  </section>
+  </div>
+  <p class="reading" id="reading"></p>
+  <p class="reading" id="conformal-line"></p>
+</section>
 
-  <section class="card tablewrap">
-    <table id="board">
-      <thead><tr>
-        <th data-k="rank">#</th><th data-k="name">Protocol</th><th data-k="tvl">TVL</th>
-        <th data-k="chg">7d %</th><th data-k="age">Age</th><th data-k="odds">Odds</th>
-        <th data-k="valueif">Value if</th><th data-k="implied">Implied value (P10&ndash;P90)</th>
-        <th data-k="rankrange">Rank range</th><th data-k="verdict">Verdict</th>
-        <th data-k="net">Net</th><th data-k="nph">Net/h</th>
-      </tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <p class="note" id="rowcount"></p>
-  </section>
+<section class="panel ledger-panel">
+  <h2>THE 758-PROTOCOL LEDGER — every protocol accounted for once</h2>
+  <div class="ledger" id="ledger"></div>
+  <div class="legend" id="ledger-legend"></div>
+  <p class="integrity" id="integrity"></p>
+</section>
 
-  <section class="models">
-    <div class="card" id="valuemodel"></div>
-    <div class="card" id="oddsmodel"></div>
-  </section>
-  <section class="card honesty" id="honesty"></section>
+<section class="panel controls">
+  <div class="row1">
+    <div class="tabs" id="tabs">
+      <button data-tier="ALL" class="on">All rows</button>
+      <button data-tier="FARM">FARM</button>
+      <button data-tier="MARGINAL">MARGINAL</button>
+      <button data-tier="SKIP">SKIP</button>
+      <button data-tier="WL">Watchlist</button>
+    </div>
+    <input id="q" type="search" placeholder="Search protocol, category, chain">
+    <select id="f-cat"><option value="">All categories</option></select>
+    <select id="f-chain"><option value="">All chains</option></select>
+    <button id="reset">Reset</button>
+    <button id="exp-csv">Export CSV</button>
+    <button id="exp-json">Export JSON</button>
+  </div>
+  <div class="row2">
+    <label>Drop share to farmers <b id="ds-val"></b><input id="ds" type="range" min="1" max="15" step="0.5"></label>
+    <label>Horizon
+      <select id="hz"><option value="12">12 weeks</option><option value="26">26 weeks</option><option value="52">52 weeks</option></select>
+    </label>
+    <label>Verdict priced at
+      <select id="ps"><option value="viable">Each row's minimum viable capital</option><option value="ref">Reference $10,000 deposit</option></select>
+    </label>
+    <span class="hint">Verdicts recompute live from the scenario. Default: 6% drop share, 26 weeks, T-bill 4%/yr, hands-on time at $25/h.</span>
+  </div>
+</section>
 
-  <footer class="note">
-    <p><b>How to read this board.</b> The house rule ranks protocols with no token recorded once TVL passes the floor; this board lifts the floor, so early protocols are ranked too and the ranked set reconciles exactly with the snapshot. <i>Value if</i> is what the value model says a launch would be worth; <i>implied</i> multiplies that by the odds model's launch probability. Both models are fitted on the snapshot's own protocols and kept only the terms that lowered the miss in all three held-out tests above. The stress verdict reprices each row at its P25 implied value. A FARM verdict is arithmetic at the stated scenario, not a promise that a token will launch.</p>
-  </footer>
+<main id="board-view">
+  <table class="board" id="board"></table>
+  <p class="foot" id="shown"></p>
 </main>
 
-<main id="detailview" hidden></main>
+<section id="detail-view" class="panel detail" hidden></section>
 
-<script src="data.js"></script>
+<footer class="foot">
+  RADAR-8 prices each row at its own minimum viable capital: the smallest deposit whose net — drop share of implied value, pro-rata to TVL, minus plan fees and hands-on hours at $25/h — clears a 4% T-bill over the same horizon. FARM: viable capital exists and is at most $250,000. MARGINAL: net positive somewhere but under the T-bill line, or viable only above $250,000. SKIP: no deposit in the domain breaks even. Implied value is this board's own claim, never a prediction that a token will be issued.
+</footer>
+
+<script src="../data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
